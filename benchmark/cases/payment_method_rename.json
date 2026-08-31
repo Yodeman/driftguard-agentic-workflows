@@ -12,5 +12,14 @@
     "models/schema.yml",
     "models/staging/schema.yml"
   ],
-  "affected_models": ["stg_payments", "orders", "customers"]
+  "affected_models": [
+    "stg_payments",
+    "orders",
+    "customers"
+  ],
+  "family": "structural",
+  "expected_pre_repair": {
+    "build_pass": false,
+    "contract_pass": false
+  }
 }

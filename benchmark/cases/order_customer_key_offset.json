@@ -1,0 +1,18 @@
+{
+  "id": "order_customer_key_offset",
+  "family": "silent_semantic",
+  "description": "raw order customer identifiers are cyclically re-keyed within their observed valid domain, preserving referential validity while reassigning orders to customers",
+  "mutation": {
+    "kind": "cyclic_offset_csv_integer_column",
+    "path": "seeds/raw_orders.csv",
+    "column": "user_id",
+    "offset": 1
+  },
+  "protected_paths": [
+    "seeds/raw_orders.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_orders", "orders", "customers"],
+  "expected_pre_repair": {"build_pass": true, "contract_pass": false}
+}

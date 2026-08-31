@@ -1,0 +1,19 @@
+{
+  "id": "customer_name_whitespace_drift",
+  "family": "silent_semantic",
+  "description": "upstream customer names gain surrounding whitespace that survives all existing dbt tests",
+  "mutation": {
+    "kind": "pad_csv_text_columns",
+    "path": "seeds/raw_customers.csv",
+    "columns": ["first_name", "last_name"],
+    "left": "  ",
+    "right": "  "
+  },
+  "protected_paths": [
+    "seeds/raw_customers.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_customers", "customers"],
+  "expected_pre_repair": {"build_pass": true, "contract_pass": false}
+}

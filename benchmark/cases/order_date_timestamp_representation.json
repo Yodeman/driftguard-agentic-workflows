@@ -1,0 +1,18 @@
+{
+  "id": "order_date_timestamp_representation",
+  "family": "representation",
+  "description": "raw_orders.order_date changes from DATE-form text to midnight TIMESTAMP-form text",
+  "mutation": {
+    "kind": "append_time_to_date_column",
+    "path": "seeds/raw_orders.csv",
+    "column": "order_date",
+    "time": "00:00:00"
+  },
+  "protected_paths": [
+    "seeds/raw_orders.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_orders", "orders", "customers"],
+  "expected_pre_repair": {"build_pass": true, "contract_pass": false}
+}

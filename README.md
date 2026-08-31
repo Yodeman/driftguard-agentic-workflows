@@ -212,3 +212,25 @@ The parser also accepts common variants including `# Fail`, `**PASS**`,
 for verdict words, and conflicting explicit markers fail closed instead of being
 guessed. This keeps formatting variation from accidentally changing benchmark
 control flow.
+
+## v4 benchmark workflow
+
+The benchmark now contains 12 blinded repairable incidents. After bootstrap and golden capture, validate all incident controls before spending model budget:
+
+```bash
+./scripts/preflight_suite.sh
+```
+
+If all controls pass, run the complete OpenCode benchmark:
+
+```bash
+./scripts/run_opencode_suite.sh
+```
+
+The suite uses the configured OpenCode Web backend and the frozen `opencode-go/glm-5.3-flash` / `max` setup, preserves each stage trajectory, and generates an aggregate report automatically. Rebuild the report at any time with:
+
+```bash
+./scripts/summarize_suite.sh
+```
+
+See `BENCHMARK.md` for case families, scoring, blinding rules, and the post-suite decision rule.

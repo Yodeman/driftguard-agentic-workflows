@@ -50,3 +50,18 @@ same sessions without changing the agent model or experimental protocol.
 **Experimental interpretation:** This is an observability/reproducibility
 improvement, not an agent-quality intervention, so it must not be credited as a
 performance gain in the improvement evaluation.
+
+## Iteration — benchmark expansion to 12 blinded cases
+
+**Why:** The successful `payment_unit_drift` verifier/retry result validated one designed failure mode, but continuing to optimize that case would overfit the solution. The benchmark was expanded before adding new agent capabilities.
+
+**What changed:** Added 9 new deterministic incidents for a 12-case suite across structural, representation, and silent-semantic drift. Added a no-agent preflight that verifies each incident behaves as designed on the frozen environment, plus automatic suite aggregation for baseline/final VRR, rescued failures, regressions, verdicts, and resource metadata.
+
+**Decision:** Freeze the agent architecture during the first 12-case run. Use observed family-level failures to choose the next intervention, if any. Ambiguous/abstention cases are deferred until a separate safe-resolution metric is defined so they do not contaminate VRR.
+
+
+### Benchmark revision v4.1 — remove seed-inference no-ops
+
+**Observed failure:** Preflight showed that `customer_id_decimal_representation` and `payment_order_id_decimal_representation` remained `contract_pass=true`. dbt/DuckDB canonicalized decimal-form identifier text such as `1.0` back to the same effective integer representation, so those mutations did not create real incidents on the frozen toolchain.
+
+**Decision:** Removed both ineffective cases before any model-budget runs. Replaced them with `payment_id_prefixed_representation` (a green-build representation drift) and `order_date_year_shift` (a green-build silent semantic drift). The suite remains 12 cases, now 3 structural / 3 representation / 6 silent-semantic.

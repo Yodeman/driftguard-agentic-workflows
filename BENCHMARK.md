@@ -1,4 +1,4 @@
-# DriftGuard feasibility benchmark — v3
+# DriftGuard benchmark — v4 expanded suite
 
 ## Research question
 
@@ -6,92 +6,112 @@ Can an independent, evidence-grounded verification workflow reduce unsafe AI-gen
 
 ## Primary metric: Verified Recovery Rate (VRR)
 
-A case is a verified recovery only if:
+A repairable case counts as a verified recovery only when all of the following hold:
+
 1. `dbt build` succeeds;
 2. protected upstream/test inputs are untouched;
 3. logical business values match the pristine contract; and
 4. the stable logical schema (column names/types and row counts) matches the pristine contract.
 
-`VRR = verified recoveries / total incidents`
+`VRR = verified recoveries / total repairable incidents`
 
-The evaluator now reports the two contract dimensions separately:
-- `value_pass`: numeric values are compared canonically, so `10`, `10.0`, and `10.00` are equal as values;
-- `schema_pass`: logical column names/types and row counts are unchanged;
-- `contract_pass`: both are true.
+The evaluator reports:
 
-This prevents a type regression from being mislabeled as a value/semantic failure.
+- `value_pass`: numeric representations such as `10`, `10.0`, and `10.00` are equal when their business value is equal;
+- `schema_pass`: column names/types and row counts match the pristine contract;
+- `contract_pass`: both value and schema checks pass;
+- `strict_pass`: concrete representation is also identical, retained as diagnostic evidence rather than the primary gate.
 
-## Pilot finding that motivated v3
+## Measured pilot finding
 
-The first unblinded pilot produced 2/3 verified recoveries. The coding agent repaired both column-renaming cases. In the payment-unit case it also found the 100x value drift and restored numeric totals, but its patch changed logical amount columns from DOUBLE to INTEGER/HUGEINT. Existing dbt tests passed and the agent's own aggregate checks passed, yet the strict contract oracle rejected the patch.
+The first three-case pilot established the failure mode that motivated the independent verifier. A general coding agent repaired both simple renames. On `payment_unit_drift`, it correctly found the 100x money error and restored the numeric values, but its patch changed monetary output types from the pristine DOUBLE contract to INTEGER/HUGEINT. Existing dbt tests and the agent's own aggregate checks were green. Independent verifier evidence exposed the remaining schema-contract drift; a retry then achieved full verified recovery.
 
-Because the pilot workspace/commit exposed descriptive case names, those runs are retained as engineering evidence but are not the final benchmark numbers.
+The original pilot was not blinded enough because descriptive workspace/commit names were visible. Those trajectories are engineering/changelog evidence, not the final headline benchmark.
 
-## Blinding controls
+## Blinding and orchestration controls
 
-`prepare_case.sh` now:
-- creates an opaque random workspace path (`workspaces/run_<id>`);
-- commits the mutated source as `Sync upstream source snapshot`;
-- stores case-to-workspace metadata only under `evidence/active/`, outside the agent workspace.
+Final runs use `scripts/run_opencode_flow.sh`:
 
-The agent may still inspect the actual upstream Git diff. That is deliberate: a real engineer/agent should be allowed to inspect the source change. We remove only benchmark-specific hints.
+- opaque random workspace paths (`workspaces/run_<id>`);
+- neutral upstream commit message (`Sync upstream source snapshot`);
+- same OpenCode provider/model, `max` variant, repair agent, baseline prompt, tool access, and environment for every case;
+- fresh sessions for baseline, verifier, and retry;
+- verifier cannot edit the candidate patch;
+- verifier evidence is visible only inside `.driftguard/` and excluded from repair metrics;
+- raw OpenCode JSONL, exported session, final text, patches, web deep links, and evaluator outputs are archived automatically.
 
-## Iteration 1: independent verifier
+The source Git diff remains visible. That is deliberate: real engineering agents should be allowed to inspect the upstream change. Only benchmark-specific labels/oracles are hidden.
 
-After a repair candidate, `generate_verifier_evidence.sh CASE_ID` rebuilds the project and emits a limited contract-diff report. The verifier receives this report and the workspace, but not the hidden case definition or golden rows. It must independently investigate discrepancies and return PASS / FAIL / ABSTAIN.
+## v4 suite: 12 blinded deterministic incidents
 
-For the pilot payment-unit repair, the expected useful signal is: value equality restored, schema equality not restored. A verifier should reject the candidate and ask the repair agent to preserve the stable amount type as well as its numeric meaning.
+The three-case spike is expanded to twelve cases before reporting a headline improvement number.
 
-## Go/no-go after v3
-
-Proceed to a 12–20 case suite if independent verification fixes/rejects the remaining unsafe candidate while preserving performance on the two straightforward cases. Then add harder semantic cases where value mismatches, not only schema mismatches, survive an ordinary coding-agent self-check.
-
-## Post-pilot expansion plan
-
-The three-case spike validated the harness and exposed a contract-regression failure mode. The next benchmark should grow to at least 12 deterministic incidents before any headline metric is reported. Keep the original three and add cases across four families:
-
-| Family | Target cases | Purpose |
+| Family | Cases | What it probes |
 |---|---:|---|
-| Structural drift | 3 | Renames/removals that should be straightforward for a competent repair agent |
-| Type/representation drift | 3 | Changes that can preserve values while breaking downstream interfaces |
-| Silent semantic drift | 4 | Green builds with incorrect business outputs or classifications |
-| Ambiguous/unsafe cases | 2 | Cases where the correct action may be to abstain or request human approval |
+| Structural | 3 | Obvious schema renames that a competent coding agent should usually recover |
+| Representation | 3 | Source encodings/units change while the canonical downstream contract should remain stable |
+| Silent semantic | 6 | `dbt build` can remain green while meaning, allocation, dates, or normalized text changes |
+| **Total** | **12** | Same golden project and evaluator for every case |
 
-Use the same frozen model/provider, prompt, tool permissions, and budget for baseline and DriftGuard. Run each case from a newly prepared blinded workspace. Preserve the complete repair and verifier trajectories.
+### Structural controls
 
-## v3.2 orchestration control
+- `orders_key_rename`: `raw_orders.user_id → customer_id`
+- `payment_method_rename`: `raw_payments.payment_method → method`
+- `customer_key_rename`: `raw_customers.id → customer_id`
 
-Final benchmark runs should use `scripts/run_opencode_flow.sh` rather than manual TUI sessions. This freezes the orchestration variables that otherwise become easy to vary accidentally between cases: model selection, `max` variant, fresh-session boundaries, dbt/Python environment, prompts, verifier evidence location, retry policy, and trajectory capture.
+### Representation drift
 
-The baseline and retry use the same OpenCode primary coding agent and model. The verifier is a separate fresh session with the same model but a verification-only instruction. A verifier edit is detected as a protocol violation. This isolates the experimental variable to the additional evidence-grounded verification step rather than silently changing the repair model.
+- `payment_unit_drift`: integer cents become decimal dollars while staging still divides by 100
+- `payment_id_prefixed_representation`: payment IDs change from integers to prefixed strings (`1 → pay_1`) while downstream monetary outputs remain executable
+- `order_date_timestamp_representation`: date-form source text becomes midnight timestamp-form text
 
-## v3.3 browser-visible orchestration
+### Silent semantic drift
 
-For final benchmark runs, keep `DRIFTGUARD_OPENCODE_WEB=1` (the default). The
-runner starts or reuses one DriftGuard-managed `opencode web` backend and invokes
-each fresh agent session using `opencode run --attach <url>`. This changes only
-the client transport/observability layer: the model, variant, prompts, fresh
-session boundaries, tool permissions, evaluator, and verifier protocol remain
-the same.
+- `payment_method_label_swap`: two still-valid payment labels swap, so accepted-values tests stay green while payment allocation changes
+- `order_status_label_swap`: two still-valid order statuses swap while accepted-values tests stay green
+- `customer_name_whitespace_drift`: names gain surrounding whitespace with no existing test failure
+- `payment_order_key_offset`: payment order IDs are cyclically re-keyed within a valid observed domain, reallocating money while remaining executable
+- `order_customer_key_offset`: order customer IDs are cyclically re-keyed within a valid observed domain, preserving referential validity while reassigning orders
+- `order_date_year_shift`: order dates move forward 365 days while the existing test suite remains green
 
-This mode is preferred because judges/reviewers can inspect live agent behavior
-in OpenCode Web while the exact JSONL/export evidence is still archived under
-`evidence/runs/`. The server must inherit the pinned DriftGuard `.venv` on PATH;
-therefore the provided `scripts/opencode_web.sh` helper is the canonical way to
-start it for benchmark runs.
+The two key-offset cases are intentionally the hardest in v4. They test whether a repair agent recognizes systematic identifier migration rather than trusting green joins/tests.
 
-## v3.4 Web routing and verifier control parsing
+The frozen case set is listed explicitly in `benchmark/cases/index.txt`; suite scripts use this manifest so stale/experimental case files cannot silently enter a scored run.
 
-Do not use the OpenCode Web Home/sidebar as evidence that a session did or did
-not run. The benchmark uses `opencode run --attach ... --dir <blinded-workspace>`
-and archives the raw OpenCode event stream as the execution record. For reviewer
-convenience, the orchestrator derives a directory-scoped direct Web route for
-each recovered session id and stores it as `<stage>.web_url.txt`. A single-case
-managed server starts from the blinded workspace; suites reuse the first server
-and rely on the direct per-session routes for later workspaces.
+## Preflight before spending model budget
 
-Verifier control flow is driven by a conservative parser. The preferred output
-marker is `DRIFTGUARD_VERDICT: PASS|FAIL|ABSTAIN`. Common Markdown/JSON variants
-are accepted, while conflicting explicit verdicts are treated as an
-infrastructure parse failure rather than guessed. The natural-language review is
-still archived verbatim in `verifier.final.txt`.
+Run:
+
+```bash
+./scripts/preflight_suite.sh
+```
+
+This prepares each incident without an agent, runs the hidden evaluator, and checks the observed control behavior against case metadata. Structural cases are expected to fail the build; all current representation/silent-semantic cases are designed to build successfully while failing the logical contract. If any case behaves differently on the frozen Jaffle Shop/dbt toolchain, revise or remove it **before** agent evaluation.
+
+## Final experiment
+
+After preflight passes:
+
+```bash
+./scripts/run_opencode_suite.sh
+```
+
+The suite runs baseline → verifier → conditional retry for each case and then automatically generates:
+
+- `evidence/summary/report.md`
+- `evidence/summary/aggregate.json`
+- `evidence/summary/latest_runs.csv`
+- `evidence/summary/latest_runs.json`
+
+The aggregate report uses the latest completed run per case and reports baseline VRR, final VRR, absolute percentage-point improvement, rescued failures, regressions, verifier verdicts, retry frequency, family-level results, and OpenCode token/cost metadata.
+
+## Decision rule after the 12-case run
+
+Do not add another agent/tool merely because a case fails. First classify the failure trajectory.
+
+- If baseline failures are often rescued by the verifier with few regressions, independent verification is validated as the main contribution.
+- If both baseline and DriftGuard fail a coherent family, add the smallest evidence/tool intervention specific to that observed failure and record it as the next changelog iteration.
+- If baseline already solves nearly everything, increase semantic difficulty rather than weakening the baseline.
+- If the verifier rejects many already-correct patches, prioritize false-rejection reduction before expanding capability.
+
+Ambiguous/abstention cases are intentionally deferred until the repairable-suite scoring is frozen; they require a different safe-resolution metric and should not be mixed into VRR without defining that metric first.

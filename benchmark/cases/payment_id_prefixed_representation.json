@@ -1,0 +1,18 @@
+{
+  "id": "payment_id_prefixed_representation",
+  "family": "representation",
+  "description": "raw_payments.id changes from integer identifiers to prefixed string identifiers while downstream monetary semantics remain otherwise unchanged",
+  "mutation": {
+    "kind": "prefix_csv_column_values",
+    "path": "seeds/raw_payments.csv",
+    "column": "id",
+    "prefix": "pay_"
+  },
+  "protected_paths": [
+    "seeds/raw_payments.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_payments"],
+  "expected_pre_repair": {"build_pass": true, "contract_pass": false}
+}

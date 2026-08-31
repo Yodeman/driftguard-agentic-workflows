@@ -1,0 +1,18 @@
+{
+  "id": "customer_key_rename",
+  "family": "structural",
+  "description": "raw_customers.id is renamed upstream to customer_id",
+  "mutation": {
+    "kind": "rename_csv_column",
+    "path": "seeds/raw_customers.csv",
+    "from": "id",
+    "to": "customer_id"
+  },
+  "protected_paths": [
+    "seeds/raw_customers.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_customers", "customers"],
+  "expected_pre_repair": {"build_pass": false, "contract_pass": false}
+}

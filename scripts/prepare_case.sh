@@ -31,7 +31,7 @@ WORK="$ROOT/workspaces/$RUN_ID"
 rm -rf "$WORK"
 mkdir -p "$ROOT/workspaces" "$STATE_DIR"
 
-git clone --no-hardlinks "$VENDOR" "$WORK" >/dev/null
+git clone -q --no-hardlinks "$VENDOR" "$WORK" >/dev/null 2>&1
 
 git -C "$WORK" config user.email "sync@upstream.local"
 git -C "$WORK" config user.name "Upstream Sync"

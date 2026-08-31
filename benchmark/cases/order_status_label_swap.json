@@ -1,0 +1,19 @@
+{
+  "id": "order_status_label_swap",
+  "family": "silent_semantic",
+  "description": "two still-valid order status labels are swapped upstream, so accepted-values tests remain green while order state semantics change",
+  "mutation": {
+    "kind": "swap_csv_values",
+    "path": "seeds/raw_orders.csv",
+    "column": "status",
+    "first": "completed",
+    "second": "returned"
+  },
+  "protected_paths": [
+    "seeds/raw_orders.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_orders", "orders"],
+  "expected_pre_repair": {"build_pass": true, "contract_pass": false}
+}

@@ -1,0 +1,18 @@
+{
+  "id": "order_date_year_shift",
+  "family": "silent_semantic",
+  "description": "raw_orders.order_date shifts forward by 365 days while all existing dbt tests remain satisfiable",
+  "mutation": {
+    "kind": "shift_csv_date_column",
+    "path": "seeds/raw_orders.csv",
+    "column": "order_date",
+    "days": 365
+  },
+  "protected_paths": [
+    "seeds/raw_orders.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_orders", "orders", "customers"],
+  "expected_pre_repair": {"build_pass": true, "contract_pass": false}
+}

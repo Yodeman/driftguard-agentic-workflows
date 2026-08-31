@@ -1,0 +1,19 @@
+{
+  "id": "payment_method_label_swap",
+  "family": "silent_semantic",
+  "description": "two still-valid payment method labels are swapped upstream, preserving accepted values while changing allocation semantics",
+  "mutation": {
+    "kind": "swap_csv_values",
+    "path": "seeds/raw_payments.csv",
+    "column": "payment_method",
+    "first": "credit_card",
+    "second": "bank_transfer"
+  },
+  "protected_paths": [
+    "seeds/raw_payments.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_payments", "orders"],
+  "expected_pre_repair": {"build_pass": true, "contract_pass": false}
+}

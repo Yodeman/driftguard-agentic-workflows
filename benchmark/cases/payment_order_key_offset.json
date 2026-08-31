@@ -1,0 +1,18 @@
+{
+  "id": "payment_order_key_offset",
+  "family": "silent_semantic",
+  "description": "raw payment order identifiers are cyclically re-keyed within their valid observed domain, keeping joins executable while reallocating money",
+  "mutation": {
+    "kind": "cyclic_offset_csv_integer_column",
+    "path": "seeds/raw_payments.csv",
+    "column": "order_id",
+    "offset": 1
+  },
+  "protected_paths": [
+    "seeds/raw_payments.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_payments", "orders", "customers"],
+  "expected_pre_repair": {"build_pass": true, "contract_pass": false}
+}
