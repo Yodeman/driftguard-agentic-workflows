@@ -20,3 +20,33 @@ The blinded DriftGuard retry subsequently recovered both values and schema contr
 > Reliable repair agents need independent contract evidence, not just more self-review: green tests and correct spot checks can still hide compatibility regressions.
 
 This is supported by the pilot and one blinded DriftGuard recovery, but should only become the submission's headline insight after the expanded evaluation reproduces the effect across multiple cases.
+
+## Iteration 1b — automate the OpenCode experiment protocol
+
+**What changed:** Replaced manual OpenCode TUI handoffs with a reproducible shell orchestrator built around `opencode run`. The runner fixes GLM-5.3-Flash, `max` variant, fresh sessions, the same Build agent for repair attempts, in-workspace `.driftguard/` evidence handoff, automatic verifier verdict routing, and trajectory/session export.
+
+**Why:** Manual copying of verifier evidence solved permissions locally but introduced avoidable operator variance and made large benchmark runs tedious. The automation makes the exact baseline → verifier → retry boundary reproducible and preserves submission-ready trajectories automatically.
+
+**Decision:** Use the automated runner for all future benchmark measurements. Retain the earlier manual run as pilot evidence, not the final aggregate evaluation.
+
+### Infrastructure iteration — Web project routing + robust verifier parsing (v3.4)
+
+**Observed failure:** OpenCode Web could launch successfully while showing no projects/sessions on Home even though attached `opencode run` stages were active in the terminal. The verifier router was also brittle when a valid verdict was formatted as Markdown such as `# Fail`.
+
+**What changed:** Single-case flows now prepare the blinded workspace before auto-starting Web so the managed server starts in that workspace. More importantly, each OpenCode stage watches its JSONL stream for the session id, builds the Web app's directory-scoped direct session route, persists it as `<stage>.web_url.txt`, and best-effort opens it. The suite starts the managed Web server from its first case workspace and relies on direct links for later cases. Verifier output now prefers `DRIFTGUARD_VERDICT: ...` but also safely parses Markdown headings/emphasis, explicit verdict labels, and JSON; conflicting markers fail closed.
+
+**Evidence/decision:** Added unit coverage for `# Fail`, bold verdicts, labels, JSON, non-verdict prose, conflicting markers, and session deep-link generation. Keep this as benchmark infrastructure; it does not alter agent capabilities or hidden evaluation.
+
+### Infrastructure iteration — OpenCode Web attachment (v3.3)
+
+**What changed:** Routed scripted baseline, verifier, and retry sessions through
+a persistent `opencode web` backend using `opencode run --attach`. Added a
+server lifecycle helper and suite-level server reuse.
+
+**Why:** Raw JSONL/export trajectories are ideal evidence artifacts but slow to
+inspect during experiments. OpenCode Web provides a readable live view of the
+same sessions without changing the agent model or experimental protocol.
+
+**Experimental interpretation:** This is an observability/reproducibility
+improvement, not an agent-quality intervention, so it must not be credited as a
+performance gain in the improvement evaluation.

@@ -9,3 +9,5 @@ evidence/*.json
 evidence/*.jsonl
 evidence/jaffle_shop_commit.txt
 evidence/bases/
+evidence/opencode_web/*
+!evidence/opencode_web/.gitkeep

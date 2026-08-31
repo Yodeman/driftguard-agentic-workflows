@@ -14,8 +14,20 @@ Rules:
 - Do not edit the project. Return feedback to the repair agent instead.
 - If the evidence is insufficient to distinguish a legitimate contract change from a regression, ABSTAIN rather than guessing.
 
-Return exactly one leading verdict: `PASS`, `FAIL`, or `ABSTAIN`.
-Then provide:
+Return your reasoning in a concise review, and include exactly one machine-readable verdict marker on its own line:
+
+`DRIFTGUARD_VERDICT: PASS`
+
+or
+
+`DRIFTGUARD_VERDICT: FAIL`
+
+or
+
+`DRIFTGUARD_VERDICT: ABSTAIN`
+
+The marker may appear at the beginning or end of your response, but include only one such marker.
+Also provide:
 - the evidence that determined the verdict;
 - the smallest concrete issue the repair agent must address, if any;
 - any executable check that would falsify your conclusion.

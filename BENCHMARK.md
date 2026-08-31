@@ -58,3 +58,40 @@ The three-case spike validated the harness and exposed a contract-regression fai
 | Ambiguous/unsafe cases | 2 | Cases where the correct action may be to abstain or request human approval |
 
 Use the same frozen model/provider, prompt, tool permissions, and budget for baseline and DriftGuard. Run each case from a newly prepared blinded workspace. Preserve the complete repair and verifier trajectories.
+
+## v3.2 orchestration control
+
+Final benchmark runs should use `scripts/run_opencode_flow.sh` rather than manual TUI sessions. This freezes the orchestration variables that otherwise become easy to vary accidentally between cases: model selection, `max` variant, fresh-session boundaries, dbt/Python environment, prompts, verifier evidence location, retry policy, and trajectory capture.
+
+The baseline and retry use the same OpenCode primary coding agent and model. The verifier is a separate fresh session with the same model but a verification-only instruction. A verifier edit is detected as a protocol violation. This isolates the experimental variable to the additional evidence-grounded verification step rather than silently changing the repair model.
+
+## v3.3 browser-visible orchestration
+
+For final benchmark runs, keep `DRIFTGUARD_OPENCODE_WEB=1` (the default). The
+runner starts or reuses one DriftGuard-managed `opencode web` backend and invokes
+each fresh agent session using `opencode run --attach <url>`. This changes only
+the client transport/observability layer: the model, variant, prompts, fresh
+session boundaries, tool permissions, evaluator, and verifier protocol remain
+the same.
+
+This mode is preferred because judges/reviewers can inspect live agent behavior
+in OpenCode Web while the exact JSONL/export evidence is still archived under
+`evidence/runs/`. The server must inherit the pinned DriftGuard `.venv` on PATH;
+therefore the provided `scripts/opencode_web.sh` helper is the canonical way to
+start it for benchmark runs.
+
+## v3.4 Web routing and verifier control parsing
+
+Do not use the OpenCode Web Home/sidebar as evidence that a session did or did
+not run. The benchmark uses `opencode run --attach ... --dir <blinded-workspace>`
+and archives the raw OpenCode event stream as the execution record. For reviewer
+convenience, the orchestrator derives a directory-scoped direct Web route for
+each recovered session id and stores it as `<stage>.web_url.txt`. A single-case
+managed server starts from the blinded workspace; suites reuse the first server
+and rely on the direct per-session routes for later workspaces.
+
+Verifier control flow is driven by a conservative parser. The preferred output
+marker is `DRIFTGUARD_VERDICT: PASS|FAIL|ABSTAIN`. Common Markdown/JSON variants
+are accepted, while conflicting explicit verdicts are treated as an
+infrastructure parse failure rather than guessed. The natural-language review is
+still archived verbatim in `verifier.final.txt`.
