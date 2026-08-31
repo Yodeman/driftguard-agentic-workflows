@@ -25,7 +25,7 @@ That makes a green pipeline necessary, but not sufficient, evidence of recovery.
 On a frozen 12-case benchmark built from the public synthetic dbt Jaffle Shop project:
 
 | System | Verified Recovery Rate | Change vs baseline |
-|---|---:|---:|
+| --- | ---: | ---: |
 | General-purpose coding-agent baseline | **6/12 (50.0%)** | — |
 | DriftGuard Iteration 1 | **7/12 (58.3%)** | +8.3 pp |
 | **DriftGuard Iteration 2** | **11/12 (91.7%)** | **+41.7 pp** |
@@ -188,6 +188,3 @@ The most dangerous failure is not an agent that crashes. It is an agent that pro
 - [`REPRODUCTION.md`](REPRODUCTION.md) — clean-environment reproduction guide
 - [`docs/EVALUATION.md`](docs/EVALUATION.md) — evaluation tables and evidence map
 - [`docs/architecture.md`](docs/architecture.md) — architecture explanation + Mermaid source
-- [`docs/VIDEO_SCRIPT.md`](docs/VIDEO_SCRIPT.md) — ≤5-minute script/storyboard
-- [`docs/JUDGE_CHECKLIST.md`](docs/JUDGE_CHECKLIST.md) — rubric audit against all 100 points
-- [`PERSONAL_REPO_GUIDE.md`](PERSONAL_REPO_GUIDE.md) — private commit-history setup guide; do not submit if you do not want it public
