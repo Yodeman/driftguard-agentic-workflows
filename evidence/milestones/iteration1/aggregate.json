@@ -1,0 +1,25 @@
+{
+  "absolute_vrr_change_pp": 8.3,
+  "baseline_failures_rescued": 1,
+  "baseline_verified": 6,
+  "baseline_vrr_percent": 50.0,
+  "cases": 12,
+  "complete": true,
+  "expected_cases": 12,
+  "final_verified": 7,
+  "final_vrr_percent": 58.3,
+  "median_baseline_tokens": 22993,
+  "median_workflow_tokens": 62846,
+  "missing_cases": [],
+  "regressions": 0,
+  "retry_runs": 4,
+  "total_baseline_reported_cost": 0.07912364,
+  "total_workflow_reported_cost": 0.1779315,
+  "verifier_fail_precision_percent": 100.0,
+  "verifier_fail_recall_percent": 66.7,
+  "verifier_pass_specificity_percent": 100.0,
+  "verifier_verdicts": {
+    "FAIL": 4,
+    "PASS": 8
+  }
+}

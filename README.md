@@ -1,284 +1,193 @@
-# DriftGuard v5 / DriftGuard v2 workflow
+# DriftGuard
 
 **Independent contract verification for AI-generated dbt repairs.**
 
-This v3 package incorporates the first real baseline experiment. The baseline was strong enough to solve obvious drift and even detect the payment-unit change, which exposed two benchmark-design lessons: the original case names leaked hints, and the evaluator conflated value mismatches with type/interface mismatches.
+> DriftGuard catches the dangerous case where an AI repaired your data pipeline, every test is green, and the data is still wrong.
 
-v3 fixes both issues and makes the next experiment evidence-driven.
+## Why this exists
 
-## Setup
+**Intended user:** analytics engineering and data-platform teams that allow AI coding agents to investigate or repair dbt projects, but still need a defensible approval gate before accepting a patch.
+
+The bottleneck has shifted. Modern coding agents can often repair obvious SQL failures. The harder question is whether a patch that *builds* still preserves the data contract that downstream consumers rely on.
+
+A repair can pass normal tests while silently changing:
+
+- business values;
+- units or category meaning;
+- column types and interfaces;
+- key relationships;
+- customer/order attribution.
+
+That makes a green pipeline necessary, but not sufficient, evidence of recovery.
+
+## Result
+
+On a frozen 12-case benchmark built from the public synthetic dbt Jaffle Shop project:
+
+| System | Verified Recovery Rate | Change vs baseline |
+|---|---:|---:|
+| General-purpose coding-agent baseline | **6/12 (50.0%)** | — |
+| DriftGuard Iteration 1 | **7/12 (58.3%)** | +8.3 pp |
+| **DriftGuard Iteration 2** | **11/12 (91.7%)** | **+41.7 pp** |
+
+Iteration 2 rescued **5 of 6 baseline failures**, introduced **0 regressions**, and achieved **100% verifier FAIL precision and 100% FAIL recall** on the frozen suite. Six of the twelve cases were certified by a deterministic contract gate, so only the unresolved half required an LLM semantic-verifier call.
+
+The official headline remains **91.7%**, even though the one remaining failure was later traced to an orchestration interruption and successfully re-run after infrastructure hardening. We do not retroactively inflate the frozen benchmark result.
+
+See [`docs/EVALUATION.md`](docs/EVALUATION.md) and [`CHANGELOG.md`](CHANGELOG.md).
+
+## Architecture
+
+![DriftGuard architecture](docs/architecture.svg)
+
+The final workflow deliberately separates what can be **proven** from what requires **interpretation**:
+
+1. **Repair agent** — investigates the changed dbt project and proposes the smallest compatibility-preserving patch.
+2. **Deterministic contract gate** — checks build status, values, schema/row-count contract, and protected-source integrity. Proven-correct repairs stop here.
+3. **Independent semantic verifier** — receives machine-generated contract evidence, not the repair agent's reasoning, and returns PASS / FAIL / ABSTAIN.
+4. **Compatibility retry** — a fresh repair session acts on verifier feedback.
+5. **Immutable-source guard** — enforces that upstream source snapshots are not rewritten to make the repair appear successful.
+6. **Hidden final evaluator** — computes Verified Recovery Rate against the frozen golden contract.
+
+The most important design principle is an **authority boundary**: an upstream source changing tells us what the source sends; it does not by itself authorize changing the downstream consumer contract.
+
+## Primary metric: Verified Recovery Rate (VRR)
+
+An incident counts as recovered only when all required checks pass:
+
+- `dbt build` succeeds;
+- logical values match the known-good contract;
+- logical schema/interface matches the known-good contract;
+- row counts/relationships remain valid;
+- protected source snapshots are not rewritten;
+- tests/schema are not weakened to manufacture success.
+
+`VRR = verified recoveries / total incidents`
+
+This is intentionally stricter than build success.
+
+## Benchmark
+
+The scored suite contains 12 deterministic, blinded incidents:
+
+- **3 structural** — obvious renamed keys/columns that break execution;
+- **3 representation/contract** — the project can build while interface/value representation changes;
+- **6 silent-semantic** — the project can build while business meaning changes.
+
+Before agent runs, `preflight_suite.sh` proves that every injected incident exhibits its declared control behavior. Two earlier candidate mutations were removed because DuckDB canonicalized them into no observable contract change; they were not allowed into the scored benchmark.
+
+The cases are frozen in [`benchmark/cases/index.txt`](benchmark/cases/index.txt).
+
+## Fair baseline
+
+The baseline uses the same OpenCode setup and the same incident workspaces as the final workflow:
+
+- OpenCode `1.18.25` in the recorded runs;
+- OpenCode Go `opencode-go/glm-5.3-flash`;
+- `max` variant / effort;
+- OpenCode `build` agent;
+- repository + terminal + dbt access;
+- a simple repair prompt in [`prompts/baseline.md`](prompts/baseline.md).
+
+The baseline does **not** receive the golden snapshot, hidden evaluator output, or benchmark case metadata before it finishes its repair.
+
+## Quick start
+
+Prerequisites:
+
+- Linux/macOS shell environment;
+- `git`;
+- [`uv`](https://docs.astral.sh/uv/);
+- OpenCode with access to an appropriate model (the recorded experiment used OpenCode Go GLM-5.3-Flash).
+
+Then:
 
 ```bash
 ./scripts/bootstrap.sh
 ./scripts/capture_golden.sh
-```
-
-`capture_golden.sh` must be re-run because v3 uses snapshot format 2 with separate value and schema hashes.
-
-## Run a blinded baseline case
-
-```bash
-./scripts/prepare_case.sh payment_unit_drift
-```
-
-The script prints an opaque `workspaces/run_<id>` path. Give **only that workspace** plus `prompts/baseline.md` to the coding agent.
-
-After the agent finishes:
-
-```bash
-./scripts/evaluate_case.sh payment_unit_drift baseline_v3
-```
-
-## Run Iteration 1: independent verifier
-
-On the same repaired candidate workspace:
-
-```bash
-./scripts/generate_verifier_evidence.sh payment_unit_drift
-```
-
-Give the generated verifier-evidence JSON, the same workspace, and `prompts/verifier_agent.md` to a fresh verifier-agent session. The verifier must not edit the project.
-
-If verdict is FAIL/ABSTAIN, give its feedback to a fresh repair-agent session using `prompts/repair_retry.md`. Then re-evaluate:
-
-```bash
-./scripts/evaluate_case.sh payment_unit_drift driftguard_v1
-```
-
-For a clean final comparison, repeat the same flow on all three cases after v3 blinding is enabled.
-
-### v3.1 verifier-evidence hygiene
-
-`generate_verifier_evidence.sh` now writes an archival report under `evidence/` and a verifier-visible copy at `.driftguard/verifier_evidence.json` inside the blinded workspace. `.driftguard/` is excluded from git repair diffs, so harness metadata does not inflate changed-file metrics. The evaluator also ignores this harness-only prefix defensively.
-
-## v3.2: automated OpenCode orchestration
-
-The benchmark can now drive the complete repair → verify → retry loop itself using OpenCode's non-interactive CLI.
-
-The default configuration matches the frozen experimental setup:
-
-- model: auto-detect the unique `*/glm-5.3-flash` entry from `opencode models`;
-- variant / reasoning effort: `max`;
-- primary agent: OpenCode `build`;
-- OpenCode Go usage multiplier: recorded as `2x` metadata (it does not alter the CLI request);
-- every baseline, verifier, and retry invocation starts a **fresh OpenCode session**;
-- the pinned DriftGuard Python/dbt environment is put on `PATH` for every stage;
-- verifier evidence and retry feedback are copied into `.driftguard/` inside the blinded workspace, so agents never need permission to read outside it;
-- `.driftguard/` is excluded from repair diffs;
-- the verifier candidate patch/status is snapshotted before and after verification. If the verifier edits the candidate, the flow stops as a protocol violation.
-
-Run one full case:
-
-```bash
-./scripts/run_opencode_flow.sh payment_unit_drift
-```
-
-Run all currently defined benchmark cases:
-
-```bash
+./scripts/preflight_suite.sh
 ./scripts/run_opencode_suite.sh
 ```
 
-Or specify a subset:
-
-```bash
-./scripts/run_opencode_suite.sh orders_key_rename payment_unit_drift
-```
-
-### OpenCode configuration overrides
-
-If multiple providers expose GLM-5.3-Flash, set the exact model returned by `opencode models`:
-
-```bash
-export DRIFTGUARD_OPENCODE_MODEL='provider/glm-5.3-flash'
-```
-
-Other supported overrides:
-
-```bash
-export DRIFTGUARD_OPENCODE_VARIANT=max
-export DRIFTGUARD_OPENCODE_AGENT=build
-export DRIFTGUARD_OPENCODE_VERIFIER_AGENT=build
-export DRIFTGUARD_OPENCODE_USAGE_MULTIPLIER=2
-export DRIFTGUARD_RETRY_ON_ABSTAIN=0
-```
-
-`ABSTAIN` is treated as a human-review outcome by default. Set `DRIFTGUARD_RETRY_ON_ABSTAIN=1` only for experiments where you intentionally want the repair agent to take another attempt after verifier uncertainty.
-
-The flow stores a complete evidence bundle under:
+The suite writes submission evidence under:
 
 ```text
 evidence/runs/<case>/<run_id>/
+evidence/summary/
+evidence/suites/
 ```
 
-including raw OpenCode JSONL events, session exports when available, final agent messages, verifier verdict, candidate/final patches, baseline/final evaluator JSON, and `flow_summary.json`.
+For exact clean-environment instructions, baseline-only commands, expected output, versions, runtime, and cost notes, read [`REPRODUCTION.md`](REPRODUCTION.md).
 
-## v3.4: resilient OpenCode Web trajectories and verdict parsing
-
-Automated benchmark runs now attach every OpenCode stage to one persistent local
-OpenCode Web server. This preserves the scripted `baseline -> verifier -> retry`
-protocol while making the live tool calls, messages, and session history easy to
-inspect in a browser.
-
-OpenCode's supported architecture for this is:
-
-- `opencode web` starts the browser UI and backend server;
-- `opencode run --attach <url>` runs a non-interactive scripted session against
-  that same backend;
-- baseline, verifier, and retry remain separate fresh sessions, each titled with
-  its stage and DriftGuard run id.
-
-DriftGuard defaults to a local-only web server at `http://127.0.0.1:4096` and
-starts it automatically when the first flow begins. The helper starts the server
-with DriftGuard's pinned `.venv/bin` on `PATH`, which matters because attached
-agent tools execute in the server process environment.
-
-Run normally:
+## One-case demo
 
 ```bash
 ./scripts/run_opencode_flow.sh payment_unit_drift
 ```
 
-The flow now prepares the blinded workspace before auto-starting OpenCode Web,
-so a single-case server starts with that workspace as its process working
-directory. Each agent stage still uses `opencode run --attach ... --dir <workspace>`.
+`payment_unit_drift` is the clearest demonstration of the problem: the upstream payment source switches from cents to dollars while the staging model still divides by 100. The project can remain **28/28 green** while payment-derived outputs are wrong. A baseline repair can restore values while accidentally changing downstream numeric types; DriftGuard's contract verification catches the remaining interface regression.
 
-OpenCode Web has had frontend versions where CLI-created sessions exist on the
-backend but the Home/sidebar does not automatically register the associated
-project. DriftGuard therefore archives a direct project/session URL for every
-stage as `<stage>.web_url.txt`.
+## OpenCode trajectories
 
-For suites, all cases now reuse one **stable, case-neutral workspace path**. That
-keeps every session in one OpenCode project while `prepare_case.sh` fully replaces
-the repository between cases. The project view is opened once; direct session
-links are archived but are **not auto-opened by default**, avoiding one browser
-tab per baseline/verifier/retry stage. OpenCode's live project UI can then be
-left open for the whole suite.
+Every automated stage stores:
 
-To restore the old behavior of auto-opening every direct session link:
+- raw JSONL events;
+- session export when available;
+- final agent response;
+- verifier evidence and verdict;
+- candidate/final patches;
+- baseline and final evaluator JSON;
+- `flow_summary.json`;
+- OpenCode Web session links.
 
-```bash
-export DRIFTGUARD_OPENCODE_WEB_OPEN_SESSION=1
-```
+Representative, judge-friendly trajectories are summarized in [`evidence/representative-trajectories/`](evidence/representative-trajectories/). The prompts that shape every agent role are committed under [`prompts/`](prompts/).
 
-Manage the server explicitly when useful:
-
-```bash
-./scripts/opencode_web.sh start
-./scripts/opencode_web.sh status
-./scripts/opencode_web.sh stop
-```
-
-A suite shares one web backend and one stable case-neutral project directory
-across all cases. Individual run ids and incident identities remain outside the
-agent workspace:
-
-```bash
-./scripts/run_opencode_suite.sh
-```
-
-The server is intentionally left running after a flow/suite so trajectories can
-be reviewed. Stop it when finished with `./scripts/opencode_web.sh stop`.
-
-### Web configuration overrides
-
-```bash
-# Disable browser-backed execution and use standalone `opencode run` behavior.
-export DRIFTGUARD_OPENCODE_WEB=0
-
-# Use another local port/host for a DriftGuard-managed server.
-export DRIFTGUARD_OPENCODE_WEB_HOST=127.0.0.1
-export DRIFTGUARD_OPENCODE_WEB_PORT=4096
-
-# Require a pre-started server instead of auto-starting one.
-export DRIFTGUARD_OPENCODE_WEB_AUTOSTART=0
-export DRIFTGUARD_OPENCODE_WEB_URL=http://127.0.0.1:4096
-```
-
-If `DRIFTGUARD_OPENCODE_WEB_URL` is set, DriftGuard treats that server as
-external and will not stop it. For benchmark reproducibility, prefer the helper
-so the server inherits the frozen dbt/Python environment.
-
-The default `127.0.0.1` binding is local-only. If you deliberately expose
-OpenCode on a network interface, set `OPENCODE_SERVER_PASSWORD` (and optionally
-`OPENCODE_SERVER_USERNAME`) before starting it.
-
-`manifest.start.json` and `flow_summary.json` record whether web attachment was
-enabled and the server URL. `flow_summary.json` also includes the direct web URL
-for each stage when available. Passwords are never written to benchmark evidence.
-
-### Verifier verdict robustness
-
-The verifier prompt now requests a machine-readable marker such as
-`DRIFTGUARD_VERDICT: FAIL`, but orchestration does not depend on perfect formatting.
-The parser also accepts common variants including `# Fail`, `**PASS**`,
-`Verdict: ABSTAIN`, and a JSON `verdict` field. It does not search arbitrary prose
-for verdict words, and conflicting explicit markers fail closed instead of being
-guessed. This keeps formatting variation from accidentally changing benchmark
-control flow.
-
-## v4 benchmark workflow
-
-The benchmark now contains 12 blinded repairable incidents. After bootstrap and golden capture, validate all incident controls before spending model budget:
-
-```bash
-./scripts/preflight_suite.sh
-```
-
-If all controls pass, run the complete OpenCode benchmark:
-
-```bash
-./scripts/run_opencode_suite.sh
-```
-
-The suite uses the configured OpenCode Web backend and the frozen `opencode-go/glm-5.3-flash` / `max` setup, preserves each stage trajectory, and generates an aggregate report automatically. Aggregate generation now runs even if one case fails at the orchestration layer; `evidence/summary/suite_status.json` and the report explicitly mark missing cases so partial results cannot be mistaken for a complete benchmark. Rebuild the report at any time with:
-
-```bash
-./scripts/summarize_suite.sh
-```
-
-See `BENCHMARK.md` for case families, scoring, blinding rules, and the post-suite decision rule.
-
-## v5 / DriftGuard v2: adaptive verification
-
-The complete Iteration-1 suite showed that always invoking an LLM verifier was expensive and that silent-semantic failures were dominated by two problems: the verifier sometimes treated an upstream sync as authorization to change consumer semantics, and retries sometimes "fixed" incidents by rewriting the upstream source snapshot.
-
-DriftGuard v2 changes the flow to:
+## Repository map
 
 ```text
-baseline repair
-      |
-      v
-deterministic contract gate
-      |------------------------------ contract-equivalent --> PASS
-      v
-semantic verifier (only on mismatch)
-      |
-      v
-compatibility retry
-      |
-      v
-immutable-source guard
-      |------------------------------ clear --> final evaluation
-      v
-one bounded policy retry
-      |
-      v
-final evaluation
+benchmark/                 incident injection, snapshotting, gates, evaluation
+benchmark/cases/           frozen 12-case benchmark
+prompts/                   baseline, verifier, repair/retry instructions
+scripts/                   setup, preflight, OpenCode orchestration, reporting
+tests/                     benchmark/orchestration tests
+docs/                      architecture, evaluation, video, judge checklist
+evidence/submission/       frozen headline summaries for the submission
+evidence/representative-trajectories/
+                           concise representative agent trajectories
 ```
 
-The consumer contract is authoritative unless explicit consumer-owned migration/approval evidence authorizes a change. `seeds/*.csv` are treated as immutable upstream inputs; repairs must normalize incompatibilities in staging/model logic.
+`vendor/jaffle_shop_duckdb` is fetched during bootstrap and is not committed.
 
-Before running v2 over an existing Iteration-1 evidence tree, archive the old summary:
+## Safety and scope
 
-```bash
-./scripts/archive_summary.sh iteration1
-```
+- All consequential changes happen inside disposable benchmark workspaces.
+- Upstream seed snapshots are treated as immutable external facts during repair.
+- DriftGuard is an approval/verification workflow, not an autonomous production deployer.
+- The benchmark uses public synthetic Jaffle Shop data; no private user data or credentials are required.
 
-Then rerun the frozen suite:
+## Improvement story
 
-```bash
-./scripts/run_opencode_suite.sh
-```
+The architecture was not designed upfront and then justified afterward. The failure trajectories drove the changes:
 
-The aggregate report now additionally records deterministic gate passes, LLM semantic-verifier calls, policy overrides, protected-source guard hits, bounded policy retries, and their token/cost overhead.
+- baseline solved obvious drift but missed contract failures;
+- Iteration 1 added independent verification and exposed **authority confusion** plus unsafe repair boundaries;
+- Iteration 2 moved provable checks into deterministic gates, defined contract authority explicitly, and enforced immutable upstream sources;
+- post-hoc hardening added workspace-local scratch paths and detects agent processes that exit successfully without completing the intended repair.
+
+Read the full evidence-linked history in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Main failure mode and hot take
+
+The most dangerous failure is not an agent that crashes. It is an agent that produces a plausible patch, passes the visible test suite, and silently changes business semantics or an interface contract.
+
+> **Reliable agents need authority boundaries, not just more reasoning. Use deterministic checks for what can be proven, agents for what requires interpretation, and enforcement for constraints the agent must not violate.**
+
+## Submission docs
+
+- [`CHANGELOG.md`](CHANGELOG.md) — final Improvement Changelog
+- [`REPRODUCTION.md`](REPRODUCTION.md) — clean-environment reproduction guide
+- [`docs/EVALUATION.md`](docs/EVALUATION.md) — evaluation tables and evidence map
+- [`docs/architecture.md`](docs/architecture.md) — architecture explanation + Mermaid source
+- [`docs/VIDEO_SCRIPT.md`](docs/VIDEO_SCRIPT.md) — ≤5-minute script/storyboard
+- [`docs/JUDGE_CHECKLIST.md`](docs/JUDGE_CHECKLIST.md) — rubric audit against all 100 points
+- [`PERSONAL_REPO_GUIDE.md`](PERSONAL_REPO_GUIDE.md) — private commit-history setup guide; do not submit if you do not want it public

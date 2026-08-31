@@ -1,0 +1,32 @@
+{
+  "complete": true,
+  "completed_cases": [
+    "customer_key_rename",
+    "customer_name_whitespace_drift",
+    "order_customer_key_offset",
+    "order_date_timestamp_representation",
+    "order_date_year_shift",
+    "order_status_label_swap",
+    "orders_key_rename",
+    "payment_id_prefixed_representation",
+    "payment_method_label_swap",
+    "payment_method_rename",
+    "payment_order_key_offset",
+    "payment_unit_drift"
+  ],
+  "expected_cases": [
+    "customer_key_rename",
+    "customer_name_whitespace_drift",
+    "order_customer_key_offset",
+    "order_date_timestamp_representation",
+    "order_date_year_shift",
+    "order_status_label_swap",
+    "orders_key_rename",
+    "payment_id_prefixed_representation",
+    "payment_method_label_swap",
+    "payment_method_rename",
+    "payment_order_key_offset",
+    "payment_unit_drift"
+  ],
+  "missing_cases": []
+}

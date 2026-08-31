@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#222"/>
+    </marker>
+    <style>
+      .box { fill:#fff; stroke:#222; stroke-width:2; rx:14; ry:14; }
+      .gate { fill:#f7f7f7; stroke:#222; stroke-width:2; }
+      .t { font-family: Arial, Helvetica, sans-serif; fill:#111; font-size:20px; text-anchor:middle; }
+      .s { font-family: Arial, Helvetica, sans-serif; fill:#333; font-size:15px; text-anchor:middle; }
+      .a { stroke:#222; stroke-width:2.2; fill:none; marker-end:url(#arrow); }
+      .label { font-family: Arial, Helvetica, sans-serif; fill:#333; font-size:14px; }
+    </style>
+  </defs>
+  <text x="600" y="38" class="t" font-size="26">DriftGuard — Repair, Prove, Then Reason</text>
+  <rect x="420" y="65" width="360" height="70" class="box"/><text x="600" y="94" class="t">Blinded upstream incident</text><text x="600" y="118" class="s">fresh disposable dbt workspace</text>
+  <path d="M600 135 L600 170" class="a"/>
+  <rect x="420" y="170" width="360" height="80" class="box"/><text x="600" y="202" class="t">Repair agent</text><text x="600" y="227" class="s">OpenCode build · GLM-5.3-Flash · max</text>
+  <path d="M600 250 L600 290" class="a"/>
+  <rect x="425" y="290" width="350" height="70" class="box"/><text x="600" y="320" class="t">Hidden baseline evaluation</text><text x="600" y="344" class="s">freeze fair baseline result</text>
+  <path d="M600 360 L600 400" class="a"/>
+  <polygon points="600,400 770,465 600,530 430,465" class="gate"/><text x="600" y="456" class="t">Deterministic</text><text x="600" y="480" class="t">contract gate</text>
+  <path d="M770 465 L980 465" class="a"/><text x="862" y="448" class="label">exact contract recovered</text>
+  <rect x="980" y="425" width="180" height="80" class="box"/><text x="1070" y="458" class="t">Verified PASS</text><text x="1070" y="482" class="s">no LLM verifier</text>
+  <path d="M600 530 L600 565" class="a"/><text x="620" y="550" class="label">mismatch remains</text>
+  <rect x="420" y="565" width="360" height="80" class="box"/><text x="600" y="597" class="t">Semantic verifier</text><text x="600" y="621" class="s">independent evidence · PASS / FAIL / ABSTAIN</text>
+  <path d="M420 605 L250 605" class="a"/><text x="335" y="588" class="label">FAIL</text>
+  <rect x="35" y="565" width="215" height="80" class="box"/><text x="142" y="597" class="t">Compatibility retry</text><text x="142" y="621" class="s">fresh repair session</text>
+  <path d="M142 565 L142 510" class="a"/>
+  <rect x="35" y="430" width="215" height="80" class="box"/><text x="142" y="462" class="t">Immutable-source guard</text><text x="142" y="486" class="s">enforced repair boundary</text>
+  <path d="M250 470 L350 470 L350 650 L420 650" class="a"/><text x="295" y="453" class="label">clean patch</text>
+  <rect x="820" y="565" width="300" height="80" class="box"/><text x="970" y="597" class="t">Final evaluator</text><text x="970" y="621" class="s">build + values + schema + policy</text>
+  <path d="M780 605 L820 605" class="a"/><text x="790" y="588" class="label">PASS / resolved</text>
+  <path d="M970 565 L970 525 L1070 525 L1070 505" class="a"/>
+  <text x="600" y="690" class="s">Authority rule: upstream change ≠ authorization to change the consumer contract.</text>
+</svg>

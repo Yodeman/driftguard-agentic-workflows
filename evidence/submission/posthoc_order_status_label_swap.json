@@ -1,0 +1,18 @@
+{
+  "label": "posthoc_infrastructure_validation_not_official_score",
+  "case": "order_status_label_swap",
+  "run_id": "run_d771a37e3bb7",
+  "model": "opencode-go/glm-5.3-flash",
+  "variant": "max",
+  "opencode_version": "1.18.25",
+  "baseline_verified_recovery": false,
+  "contract_gate_decision": "REVIEW",
+  "verifier_mode": "semantic_agent",
+  "verifier_verdict": "FAIL",
+  "retry_ran": true,
+  "source_guard_violation": false,
+  "final_value_pass": true,
+  "final_schema_pass": true,
+  "final_verified_recovery": true,
+  "reporting_note": "Post-hoc validation only. Official frozen Iteration-2 benchmark remains 11/12 (91.7%)."
+}
