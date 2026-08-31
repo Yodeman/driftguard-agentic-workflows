@@ -23,4 +23,4 @@ git clone --local "$VENDOR" "$WORK" >/dev/null
   "$WORK/jaffle_shop.duckdb" \
   "$ROOT/evidence/golden_snapshot.json"
 
-echo "Golden semantic snapshot captured."
+echo "Golden contract snapshot v2 captured."

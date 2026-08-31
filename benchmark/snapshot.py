@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Capture a stable semantic snapshot from the Jaffle Shop DuckDB database."""
+"""Capture a stable contract snapshot from the Jaffle Shop DuckDB database.
+
+The snapshot intentionally separates schema stability from value stability:
+- strict_rows_sha256 preserves the concrete Python/DuckDB value types.
+- values_sha256 canonicalizes numeric values so 10, 10.0, and Decimal('10.00')
+  compare as the same business value.
+
+This lets the benchmark distinguish a semantic/value recovery from an interface
+schema regression instead of collapsing both into one opaque hash mismatch.
+"""
 
 from __future__ import annotations
 
@@ -8,39 +17,84 @@ import datetime as dt
 import decimal
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 DEFAULT_MODELS = ["stg_customers", "stg_orders", "stg_payments", "orders", "customers"]
 
 
-def normalize(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, bool)):
-        return value
+def normalize_strict(value: Any) -> Any:
+    """Preserve representation/type distinctions in the row hash."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return {"$bool": value}
+    if isinstance(value, int):
+        return {"$int": value}
     if isinstance(value, float):
-        # Stable enough for this small deterministic benchmark while tolerating
-        # irrelevant binary representation noise.
-        return round(value, 12)
+        if math.isnan(value):
+            return {"$float": "nan"}
+        if math.isinf(value):
+            return {"$float": "inf" if value > 0 else "-inf"}
+        return {"$float": round(value, 12)}
     if isinstance(value, decimal.Decimal):
-        return format(value.normalize(), "f")
+        return {"$decimal": format(value.normalize(), "f")}
+    if isinstance(value, str):
+        return {"$str": value}
     if isinstance(value, (dt.date, dt.datetime, dt.time)):
-        return value.isoformat()
-    return str(value)
+        return {"$temporal": value.isoformat()}
+    return {"$other": str(value)}
+
+
+def _canonical_decimal_text(value: int | float | decimal.Decimal) -> str:
+    if isinstance(value, float):
+        if math.isnan(value):
+            return "nan"
+        if math.isinf(value):
+            return "inf" if value > 0 else "-inf"
+        dec = decimal.Decimal(str(round(value, 12)))
+    else:
+        dec = decimal.Decimal(value)
+    if dec == 0:
+        dec = decimal.Decimal(0)
+    text = format(dec.normalize(), "f")
+    return text if "." in text else f"{text}.0"
+
+
+def normalize_value(value: Any) -> Any:
+    """Canonicalize by logical value while keeping strings/bools distinct."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return {"$bool": value}
+    if isinstance(value, (int, float, decimal.Decimal)):
+        return {"$num": _canonical_decimal_text(value)}
+    if isinstance(value, str):
+        return {"$str": value}
+    if isinstance(value, (dt.date, dt.datetime, dt.time)):
+        return {"$temporal": value.isoformat()}
+    return {"$other": str(value)}
+
+
+def _hash_rows(rows: list[list[Any]]) -> str:
+    encoded = json.dumps(rows, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def snapshot_model(conn, model: str) -> dict:
     schema_rows = conn.execute(f'DESCRIBE SELECT * FROM "{model}"').fetchall()
     columns = [{"name": row[0], "type": row[1]} for row in schema_rows]
 
-    # DuckDB's ORDER BY ALL provides deterministic ordering across the small
-    # benchmark tables without assuming a particular primary key.
+    # DuckDB's ORDER BY ALL gives deterministic ordering for these small tables.
     data_rows = conn.execute(f'SELECT * FROM "{model}" ORDER BY ALL').fetchall()
-    normalized = [[normalize(v) for v in row] for row in data_rows]
-    encoded = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), sort_keys=False).encode()
+    strict_rows = [[normalize_strict(v) for v in row] for row in data_rows]
+    value_rows = [[normalize_value(v) for v in row] for row in data_rows]
     return {
         "columns": columns,
-        "row_count": len(normalized),
-        "rows_sha256": hashlib.sha256(encoded).hexdigest(),
+        "row_count": len(data_rows),
+        "strict_rows_sha256": _hash_rows(strict_rows),
+        "values_sha256": _hash_rows(value_rows),
     }
 
 
@@ -53,6 +107,7 @@ def capture(database: Path, models: list[str]) -> dict:
     conn = duckdb.connect(str(database), read_only=True)
     try:
         return {
+            "snapshot_version": 2,
             "database": database.name,
             "models": {model: snapshot_model(conn, model) for model in models},
         }
