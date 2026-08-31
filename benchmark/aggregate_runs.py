@@ -70,10 +70,12 @@ def main() -> None:
         verifier = stage_usage(run_dir, "verifier")
         retry = stage_usage(run_dir, "retry")
         policy_retry = stage_usage(run_dir, "policy_retry")
+        completion_retry = stage_usage(run_dir, "completion_retry")
         baseline_tokens = token_total(baseline["tokens"])
         verifier_tokens = token_total(verifier["tokens"])
         retry_tokens = token_total(retry["tokens"])
         policy_retry_tokens = token_total(policy_retry["tokens"])
+        completion_retry_tokens = token_total(completion_retry["tokens"])
         rows.append(
             {
                 "case": case_id,
@@ -90,6 +92,7 @@ def main() -> None:
                 "retry_ran": bool(flow.get("retry_ran")),
                 "source_guard_violation": bool(flow.get("source_guard_violation")),
                 "policy_retry_ran": bool(flow.get("policy_retry_ran")),
+                "completion_retry_ran": bool(flow.get("completion_retry_ran")),
                 "final_verified_recovery": bool(flow.get("final_verified_recovery")),
                 "final_value_pass": bool(flow.get("final_value_pass")),
                 "final_schema_pass": bool(flow.get("final_schema_pass")),
@@ -97,9 +100,10 @@ def main() -> None:
                 "verifier_tokens": verifier_tokens,
                 "retry_tokens": retry_tokens,
                 "policy_retry_tokens": policy_retry_tokens,
-                "workflow_tokens": baseline_tokens + verifier_tokens + retry_tokens + policy_retry_tokens,
+                "completion_retry_tokens": completion_retry_tokens,
+                "workflow_tokens": baseline_tokens + verifier_tokens + retry_tokens + policy_retry_tokens + completion_retry_tokens,
                 "baseline_reported_cost": round(float(baseline["cost"]), 8),
-                "workflow_reported_cost": round(float(baseline["cost"] + verifier["cost"] + retry["cost"] + policy_retry["cost"]), 8),
+                "workflow_reported_cost": round(float(baseline["cost"] + verifier["cost"] + retry["cost"] + policy_retry["cost"] + completion_retry["cost"]), 8),
                 "evidence_dir": str(run_dir),
             }
         )
@@ -140,6 +144,7 @@ def main() -> None:
     policy_overrides = sum(r["verifier_policy_override"] for r in rows)
     source_guard_violations = sum(r["source_guard_violation"] for r in rows)
     policy_retries = sum(r["policy_retry_ran"] for r in rows)
+    completion_retries = sum(r["completion_retry_ran"] for r in rows)
     verdicts = Counter(str(r["verifier_verdict"]) for r in rows)
     # Treat a baseline verified recovery as a verifier PASS target, and a
     # baseline failure as a FAIL target. ABSTAIN remains neither. This is a
@@ -170,6 +175,7 @@ def main() -> None:
         "verifier_policy_overrides": policy_overrides,
         "source_guard_violations": source_guard_violations,
         "policy_retry_runs": policy_retries,
+        "completion_retry_runs": completion_retries,
         "verifier_verdicts": dict(verdicts),
         "verifier_fail_precision_percent": percent(verifier_tp, verifier_tp + verifier_fp),
         "verifier_fail_recall_percent": percent(verifier_tp, verifier_tp + verifier_fn),
@@ -212,6 +218,7 @@ def main() -> None:
         f"- Verifier PASS→FAIL policy overrides: **{policy_overrides}**",
         f"- Protected-source guard violations: **{source_guard_violations}**",
         f"- Bounded policy retries: **{policy_retries}**",
+        f"- Bounded completion retries: **{completion_retries}**",
         "",
         "## By failure family",
         "",
@@ -239,7 +246,7 @@ def main() -> None:
             f"| `{r['case']}` | {r['family']} | {'PASS' if r['baseline_verified_recovery'] else 'FAIL'} | "
             f"{r['verifier_mode']} | {r['verifier_verdict']} | {'yes' if r['retry_ran'] else 'no'} | "
             f"{'hit' if r['source_guard_violation'] else 'clear'} | {'yes' if r['policy_retry_ran'] else 'no'} | "
-            f"{'PASS' if r['final_verified_recovery'] else 'FAIL'} | {r['baseline_tokens']} | {r['workflow_tokens']} |"
+            f"{'yes' if r['completion_retry_ran'] else 'no'} | {'PASS' if r['final_verified_recovery'] else 'FAIL'} | {r['baseline_tokens']} | {r['workflow_tokens']} |"
         )
 
     lines += [

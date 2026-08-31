@@ -41,6 +41,8 @@ or
 
 Use PASS only when the candidate is already contract-compatible, or when explicit consumer-owned migration evidence truly authorizes the observed contract change. Otherwise use FAIL when a concrete compatibility issue is identifiable, or ABSTAIN when intent cannot be established.
 
+All executable checks you recommend must run entirely inside the provided workspace. Use `.driftguard/scratch/` for temporary files. Never recommend `/tmp`, `/var/tmp`, home-directory paths, or any path outside the workspace.
+
 Also provide:
 - the evidence that determined the verdict;
 - the smallest concrete downstream issue the repair agent must address, if any;

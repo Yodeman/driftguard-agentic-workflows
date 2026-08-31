@@ -316,7 +316,7 @@ run_opencode_stage() {
 # Harness-only files are visible to agents when needed but excluded from Git
 # repair metrics. Prompts are passed directly on the CLI, so no outside-
 # workspace file permission is required.
-mkdir -p "$WORK/.driftguard"
+mkdir -p "$WORK/.driftguard/scratch"
 printf '%s\n' '.driftguard/' >> "$WORK/.git/info/exclude"
 
 "${UV_RUN[@]}" python - "$RUN_DIR/manifest.start.json" <<PY
@@ -438,6 +438,9 @@ POLICY_RETRY_RAN=0
 POLICY_RETRY_AGENT_RC=0
 SOURCE_GUARD_VIOLATION=0
 SOURCE_GUARD_FINAL_VIOLATION=0
+COMPLETION_RETRY_RAN=0
+COMPLETION_RETRY_AGENT_RC=0
+COMPLETION_RETRY_SOURCE_VIOLATION=0
 
 if [[ "$VERDICT" == "FAIL" || ( "$VERDICT" == "ABSTAIN" && "$RETRY_ON_ABSTAIN" == "1" ) ]]; then
   RETRY_RAN=1
@@ -481,6 +484,27 @@ EOF
     "${UV_RUN[@]}" python "$SOURCE_GUARD_PY" "$WORK" "$BASE" --restore --output "$RUN_DIR/source_guard.after_policy_retry.json" >/dev/null || true
     SOURCE_GUARD_FINAL_VIOLATION="$("${UV_RUN[@]}" python -c 'import json,sys; print(1 if json.load(open(sys.argv[1]))["violation"] else 0)' "$RUN_DIR/source_guard.after_policy_retry.json")"
   fi
+
+  # A verifier FAIL followed by a retry that leaves the candidate patch
+  # unchanged is an incomplete repair attempt even if OpenCode exits 0. This
+  # catches permission/tool interruptions (for example an external-directory
+  # request being auto-rejected) without mistaking process success for task
+  # completion. Allow exactly one fresh, bounded completion retry.
+  git -C "$WORK" diff --binary "$BASE" > "$RUN_DIR/candidate_after_retry_guard.patch"
+  if [[ "$SOURCE_GUARD_VIOLATION" == "0" && "$POLICY_RETRY_RAN" == "0" ]] && cmp -s "$RUN_DIR/candidate_before_verifier.patch" "$RUN_DIR/candidate_after_retry_guard.patch"; then
+    COMPLETION_RETRY_RAN=1
+    COMPLETION_RETRY_PROMPT="$(cat "$ROOT/prompts/completion_retry.md")"
+    if run_opencode_stage "completion_retry" "$REPAIR_AGENT" "$COMPLETION_RETRY_PROMPT" "$RUN_DIR" "$WORK"; then
+      COMPLETION_RETRY_AGENT_RC=0
+    else
+      COMPLETION_RETRY_AGENT_RC=$?
+    fi
+    "${UV_RUN[@]}" python "$SOURCE_GUARD_PY" "$WORK" "$BASE" --restore --output "$RUN_DIR/source_guard.after_completion_retry.json" >/dev/null || true
+    COMPLETION_RETRY_SOURCE_VIOLATION="$("${UV_RUN[@]}" python -c 'import json,sys; print(1 if json.load(open(sys.argv[1]))["violation"] else 0)' "$RUN_DIR/source_guard.after_completion_retry.json")"
+    if [[ "$COMPLETION_RETRY_SOURCE_VIOLATION" == "1" ]]; then
+      SOURCE_GUARD_FINAL_VIOLATION=1
+    fi
+  fi
 else
   echo "No retry launched for verifier verdict: $VERDICT"
 fi
@@ -520,6 +544,9 @@ payload={
   "source_guard_violation": bool(int(r"$SOURCE_GUARD_VIOLATION")),
   "policy_retry_ran": bool(int(r"$POLICY_RETRY_RAN")),
   "policy_retry_agent_exit_code": int(r"$POLICY_RETRY_AGENT_RC"),
+  "completion_retry_ran": bool(int(r"$COMPLETION_RETRY_RAN")),
+  "completion_retry_agent_exit_code": int(r"$COMPLETION_RETRY_AGENT_RC"),
+  "completion_retry_source_violation": bool(int(r"$COMPLETION_RETRY_SOURCE_VIOLATION")),
   "source_guard_final_violation": bool(int(r"$SOURCE_GUARD_FINAL_VIOLATION")),
   "final_evaluator_exit_code": int(r"$FINAL_EVAL_RC"),
   "final_verified_recovery": final.get("verified_recovery"),
@@ -527,7 +554,7 @@ payload={
   "final_schema_pass": final.get("schema_pass"),
   "web_sessions": {
     stage: (out.parent / f"{stage}.web_url.txt").read_text().strip()
-    for stage in ("baseline", "verifier", "retry", "policy_retry")
+    for stage in ("baseline", "verifier", "retry", "policy_retry", "completion_retry")
     if (out.parent / f"{stage}.web_url.txt").exists()
   },
 }
@@ -551,6 +578,7 @@ Policy override:      $POLICY_OVERRIDE
 Retry ran:            $RETRY_RAN
 Source guard hit:     $SOURCE_GUARD_VIOLATION
 Policy retry ran:     $POLICY_RETRY_RAN
+Completion retry:     $COMPLETION_RETRY_RAN
 Final recovered:      $("${UV_RUN[@]}" python -c 'import json,sys; print(json.load(open(sys.argv[1]))["verified_recovery"])' "$RUN_DIR/final.evaluation.json")
 Evidence bundle:      $RUN_DIR
 Summary:              $RUN_DIR/flow_summary.json

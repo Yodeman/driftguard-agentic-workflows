@@ -120,3 +120,11 @@ Trajectory review found two distinct failure modes behind the silent-semantic pl
 5. **Deterministic source guard + one bounded policy retry.** If a retry still edits a protected upstream source, DriftGuard restores only that edit to the incident baseline and gives a fresh repair agent one explicit policy-correction attempt. A second source violation fails closed.
 
 **Evaluation plan:** rerun the same frozen 12 cases with the same baseline model/provider/variant. Preserve the Iteration-1 summary as a milestone before rerunning. Compare VRR, verifier recall, regressions, semantic-verifier call rate, source-guard violations, policy retries, tokens, and reported cost. Do not change benchmark cases during this iteration.
+
+
+## Post-Iteration-2 infrastructure hardening
+
+- **Observed failure:** `order_status_label_swap` was correctly diagnosed by the semantic verifier, but the retry session attempted the verifier's `/tmp/...` falsification command. OpenCode rejected the external-directory permission request, returned exit code 0, and the session ended before applying any patch.
+- **Learning:** a successful agent-process exit code is not proof that a repair stage completed its intended action. Tool-policy boundaries must also be reflected in verifier-generated commands.
+- **Change:** verifier and retry prompts now require workspace-local scratch paths under `.driftguard/scratch/`. The orchestrator also detects a verifier-FAIL retry that leaves the candidate patch unchanged and launches one bounded completion retry.
+- **Reporting:** this correction is treated as post-hoc infrastructure hardening; the frozen Iteration-2 headline remains 11/12 (91.7% VRR) rather than retroactively inflating the measured result.
