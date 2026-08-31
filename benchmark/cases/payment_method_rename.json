@@ -1,0 +1,16 @@
+{
+  "id": "payment_method_rename",
+  "description": "raw_payments.payment_method is renamed upstream to method",
+  "mutation": {
+    "kind": "rename_csv_column",
+    "path": "seeds/raw_payments.csv",
+    "from": "payment_method",
+    "to": "method"
+  },
+  "protected_paths": [
+    "seeds/raw_payments.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_payments", "orders", "customers"]
+}

@@ -1,0 +1,16 @@
+{
+  "id": "orders_key_rename",
+  "description": "raw_orders.user_id is renamed upstream to customer_id",
+  "mutation": {
+    "kind": "rename_csv_column",
+    "path": "seeds/raw_orders.csv",
+    "from": "user_id",
+    "to": "customer_id"
+  },
+  "protected_paths": [
+    "seeds/raw_orders.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_orders", "orders", "customers"]
+}

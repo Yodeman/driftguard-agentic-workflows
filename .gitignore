@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+workspaces/*
+!workspaces/.gitkeep
+vendor/*
+!vendor/.gitkeep
+evidence/*.json
+evidence/*.jsonl
+evidence/jaffle_shop_commit.txt
+evidence/bases/

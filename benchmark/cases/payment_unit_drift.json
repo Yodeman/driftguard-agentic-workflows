@@ -1,0 +1,17 @@
+{
+  "id": "payment_unit_drift",
+  "description": "raw_payments.amount changes representation from integer cents to decimal dollars",
+  "mutation": {
+    "kind": "scale_csv_numeric_column",
+    "path": "seeds/raw_payments.csv",
+    "column": "amount",
+    "factor": "0.01",
+    "decimal_places": 2
+  },
+  "protected_paths": [
+    "seeds/raw_payments.csv",
+    "models/schema.yml",
+    "models/staging/schema.yml"
+  ],
+  "affected_models": ["stg_payments", "orders", "customers"]
+}
