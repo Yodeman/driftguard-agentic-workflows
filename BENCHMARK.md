@@ -115,3 +115,23 @@ Do not add another agent/tool merely because a case fails. First classify the fa
 - If the verifier rejects many already-correct patches, prioritize false-rejection reduction before expanding capability.
 
 Ambiguous/abstention cases are intentionally deferred until the repairable-suite scoring is frozen; they require a different safe-resolution metric and should not be mixed into VRR without defining that metric first.
+
+## Iteration-2 verification protocol
+
+The frozen case definitions remain unchanged. Only the solution workflow changes.
+
+For each case:
+
+1. Run the same baseline repair agent and score it with the hidden evaluator.
+2. Generate verifier evidence against the last-known-good consumer contract.
+3. Run the deterministic contract gate:
+   - if build/value/schema/row-count equivalence holds and protected upstream sources are untouched, accept without an LLM verifier;
+   - otherwise route to the semantic verifier.
+4. The semantic verifier must treat upstream snapshots as observations, not authorization to change consumer semantics. Without explicit consumer-owned migration/approval evidence, unresolved contract drift is a repairable incompatibility.
+5. Run one compatibility retry on FAIL.
+6. Check immutable upstream sources (`seeds/*.csv`). If the retry modified them, restore only those paths to the incident baseline and allow one bounded policy-correction retry.
+7. Run the same hidden evaluator used for the baseline.
+
+Primary metric remains **Verified Recovery Rate (VRR)**. Secondary measurements for this iteration include LLM semantic-verifier call rate, verifier FAIL recall/precision, source-guard violations, policy-retry frequency, tokens, reported cost, and regressions on baseline-success cases.
+
+The Iteration-1 complete 12-case result must be archived before rerunning so the changelog comparison is reproducible.

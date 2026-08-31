@@ -1,4 +1,4 @@
-# DriftGuard v3
+# DriftGuard v5 / DriftGuard v2 workflow
 
 **Independent contract verification for AI-generated dbt repairs.**
 
@@ -238,3 +238,47 @@ The suite uses the configured OpenCode Web backend and the frozen `opencode-go/g
 ```
 
 See `BENCHMARK.md` for case families, scoring, blinding rules, and the post-suite decision rule.
+
+## v5 / DriftGuard v2: adaptive verification
+
+The complete Iteration-1 suite showed that always invoking an LLM verifier was expensive and that silent-semantic failures were dominated by two problems: the verifier sometimes treated an upstream sync as authorization to change consumer semantics, and retries sometimes "fixed" incidents by rewriting the upstream source snapshot.
+
+DriftGuard v2 changes the flow to:
+
+```text
+baseline repair
+      |
+      v
+deterministic contract gate
+      |------------------------------ contract-equivalent --> PASS
+      v
+semantic verifier (only on mismatch)
+      |
+      v
+compatibility retry
+      |
+      v
+immutable-source guard
+      |------------------------------ clear --> final evaluation
+      v
+one bounded policy retry
+      |
+      v
+final evaluation
+```
+
+The consumer contract is authoritative unless explicit consumer-owned migration/approval evidence authorizes a change. `seeds/*.csv` are treated as immutable upstream inputs; repairs must normalize incompatibilities in staging/model logic.
+
+Before running v2 over an existing Iteration-1 evidence tree, archive the old summary:
+
+```bash
+./scripts/archive_summary.sh iteration1
+```
+
+Then rerun the frozen suite:
+
+```bash
+./scripts/run_opencode_suite.sh
+```
+
+The aggregate report now additionally records deterministic gate passes, LLM semantic-verifier calls, policy overrides, protected-source guard hits, bounded policy retries, and their token/cost overhead.

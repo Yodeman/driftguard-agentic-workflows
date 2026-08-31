@@ -69,9 +69,11 @@ def main() -> None:
         baseline = stage_usage(run_dir, "baseline")
         verifier = stage_usage(run_dir, "verifier")
         retry = stage_usage(run_dir, "retry")
+        policy_retry = stage_usage(run_dir, "policy_retry")
         baseline_tokens = token_total(baseline["tokens"])
         verifier_tokens = token_total(verifier["tokens"])
         retry_tokens = token_total(retry["tokens"])
+        policy_retry_tokens = token_total(policy_retry["tokens"])
         rows.append(
             {
                 "case": case_id,
@@ -83,16 +85,21 @@ def main() -> None:
                 "baseline_value_pass": bool(flow.get("baseline_value_pass")),
                 "baseline_schema_pass": bool(flow.get("baseline_schema_pass")),
                 "verifier_verdict": flow.get("verifier_verdict"),
+                "verifier_mode": flow.get("verifier_mode", "semantic_agent"),
+                "verifier_policy_override": bool(flow.get("verifier_policy_override")),
                 "retry_ran": bool(flow.get("retry_ran")),
+                "source_guard_violation": bool(flow.get("source_guard_violation")),
+                "policy_retry_ran": bool(flow.get("policy_retry_ran")),
                 "final_verified_recovery": bool(flow.get("final_verified_recovery")),
                 "final_value_pass": bool(flow.get("final_value_pass")),
                 "final_schema_pass": bool(flow.get("final_schema_pass")),
                 "baseline_tokens": baseline_tokens,
                 "verifier_tokens": verifier_tokens,
                 "retry_tokens": retry_tokens,
-                "workflow_tokens": baseline_tokens + verifier_tokens + retry_tokens,
+                "policy_retry_tokens": policy_retry_tokens,
+                "workflow_tokens": baseline_tokens + verifier_tokens + retry_tokens + policy_retry_tokens,
                 "baseline_reported_cost": round(float(baseline["cost"]), 8),
-                "workflow_reported_cost": round(float(baseline["cost"] + verifier["cost"] + retry["cost"]), 8),
+                "workflow_reported_cost": round(float(baseline["cost"] + verifier["cost"] + retry["cost"] + policy_retry["cost"]), 8),
                 "evidence_dir": str(run_dir),
             }
         )
@@ -128,6 +135,11 @@ def main() -> None:
     rescued = sum((not r["baseline_verified_recovery"]) and r["final_verified_recovery"] for r in rows)
     regressions = sum(r["baseline_verified_recovery"] and (not r["final_verified_recovery"]) for r in rows)
     retries = sum(r["retry_ran"] for r in rows)
+    semantic_verifier_calls = sum(r["verifier_mode"] == "semantic_agent" for r in rows)
+    deterministic_gate_passes = sum(r["verifier_mode"] == "deterministic_contract_gate" for r in rows)
+    policy_overrides = sum(r["verifier_policy_override"] for r in rows)
+    source_guard_violations = sum(r["source_guard_violation"] for r in rows)
+    policy_retries = sum(r["policy_retry_ran"] for r in rows)
     verdicts = Counter(str(r["verifier_verdict"]) for r in rows)
     # Treat a baseline verified recovery as a verifier PASS target, and a
     # baseline failure as a FAIL target. ABSTAIN remains neither. This is a
@@ -153,6 +165,11 @@ def main() -> None:
         "baseline_failures_rescued": rescued,
         "regressions": regressions,
         "retry_runs": retries,
+        "semantic_verifier_calls": semantic_verifier_calls,
+        "deterministic_gate_passes": deterministic_gate_passes,
+        "verifier_policy_overrides": policy_overrides,
+        "source_guard_violations": source_guard_violations,
+        "policy_retry_runs": policy_retries,
         "verifier_verdicts": dict(verdicts),
         "verifier_fail_precision_percent": percent(verifier_tp, verifier_tp + verifier_fp),
         "verifier_fail_recall_percent": percent(verifier_tp, verifier_tp + verifier_fn),
@@ -190,6 +207,11 @@ def main() -> None:
         f"- Verifier FAIL precision: **{aggregate['verifier_fail_precision_percent']}%**" if n else "- Verifier FAIL precision: n/a",
         f"- Verifier FAIL recall on baseline failures: **{aggregate['verifier_fail_recall_percent']}%**" if n else "- Verifier FAIL recall: n/a",
         f"- Retry stages run: **{retries}/{n}**" if n else "- Retry stages run: n/a",
+        f"- LLM semantic verifier calls: **{semantic_verifier_calls}/{n}**" if n else "- LLM semantic verifier calls: n/a",
+        f"- Deterministic contract-gate passes: **{deterministic_gate_passes}/{n}**" if n else "- Deterministic gate passes: n/a",
+        f"- Verifier PASS→FAIL policy overrides: **{policy_overrides}**",
+        f"- Protected-source guard violations: **{source_guard_violations}**",
+        f"- Bounded policy retries: **{policy_retries}**",
         "",
         "## By failure family",
         "",
@@ -209,13 +231,14 @@ def main() -> None:
         "",
         "## Case-level results",
         "",
-        "| Case | Family | Baseline | Verifier | Retry | Final | Baseline tokens | Workflow tokens |",
-        "|---|---|---:|---|---:|---:|---:|---:|",
+        "| Case | Family | Baseline | Verification mode | Verdict | Retry | Guard | Policy retry | Final | Baseline tokens | Workflow tokens |",
+        "|---|---|---:|---|---|---:|---:|---:|---:|---:|---:|",
     ]
     for r in sorted(rows, key=lambda x: (x["family"], x["case"])):
         lines.append(
             f"| `{r['case']}` | {r['family']} | {'PASS' if r['baseline_verified_recovery'] else 'FAIL'} | "
-            f"{r['verifier_verdict']} | {'yes' if r['retry_ran'] else 'no'} | "
+            f"{r['verifier_mode']} | {r['verifier_verdict']} | {'yes' if r['retry_ran'] else 'no'} | "
+            f"{'hit' if r['source_guard_violation'] else 'clear'} | {'yes' if r['policy_retry_ran'] else 'no'} | "
             f"{'PASS' if r['final_verified_recovery'] else 'FAIL'} | {r['baseline_tokens']} | {r['workflow_tokens']} |"
         )
 

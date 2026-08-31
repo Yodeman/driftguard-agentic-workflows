@@ -12,6 +12,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="$ROOT/.venv"
 STATE_FILE="$ROOT/evidence/active/$CASE.json"
 TRACE_PY="$ROOT/benchmark/opencode_trace.py"
+CONTRACT_GATE_PY="$ROOT/benchmark/contract_gate.py"
+SOURCE_GUARD_PY="$ROOT/benchmark/source_guard.py"
 OPENCODE_BIN="${DRIFTGUARD_OPENCODE_BIN:-opencode}"
 MODEL="${DRIFTGUARD_OPENCODE_MODEL:-}"
 VARIANT="${DRIFTGUARD_OPENCODE_VARIANT:-max}"
@@ -20,7 +22,7 @@ VERIFIER_AGENT="${DRIFTGUARD_OPENCODE_VERIFIER_AGENT:-build}"
 RETRY_ON_ABSTAIN="${DRIFTGUARD_RETRY_ON_ABSTAIN:-0}"
 AUTO_APPROVE="${DRIFTGUARD_OPENCODE_AUTO:-0}"
 BASELINE_SYSTEM="${DRIFTGUARD_BASELINE_SYSTEM:-baseline_v4}"
-FINAL_SYSTEM="${DRIFTGUARD_FINAL_SYSTEM:-driftguard_v1}"
+FINAL_SYSTEM="${DRIFTGUARD_FINAL_SYSTEM:-driftguard_v2}"
 USAGE_MULTIPLIER="${DRIFTGUARD_OPENCODE_USAGE_MULTIPLIER:-2}"
 WEB_ENABLED="${DRIFTGUARD_OPENCODE_WEB:-1}"
 WEB_AUTOSTART="${DRIFTGUARD_OPENCODE_WEB_AUTOSTART:-1}"
@@ -352,49 +354,91 @@ else
   BASELINE_EVAL_RC=$?
 fi
 
-# 3) Generate machine evidence and make a verifier-visible copy in workspace.
+# 3) Generate machine evidence. A deterministic contract gate handles the easy
+# equivalence case without spending an LLM verifier call. Only mismatches or
+# policy violations route to semantic review.
 "$ROOT/scripts/generate_verifier_evidence.sh" "$CASE" | tee "$RUN_DIR/verifier_evidence_generation.log"
 cp "$WORK/.driftguard/verifier_evidence.json" "$RUN_DIR/verifier_evidence.json"
+"${UV_RUN[@]}" python "$CONTRACT_GATE_PY" "$RUN_DIR/verifier_evidence.json" --output "$RUN_DIR/contract_gate.json" >/dev/null
+GATE_DECISION="$("${UV_RUN[@]}" python -c 'import json,sys; print(json.load(open(sys.argv[1]))["decision"])' "$RUN_DIR/contract_gate.json")"
 
-# 4) Independent verifier in a fresh OpenCode session. Snapshot the candidate
-# patch first so any verifier edit becomes an explicit protocol violation.
+VERIFIER_MODE="deterministic_contract_gate"
+VERIFIER_AGENT_RC=0
+VERDICT="PASS"
+POLICY_OVERRIDE=0
+
+# Snapshot the candidate before any semantic verifier. If an LLM verifier runs,
+# it is strictly read-only and any edit is treated as a protocol violation.
 git -C "$WORK" diff --binary "$BASE" > "$RUN_DIR/candidate_before_verifier.patch"
 git -C "$WORK" status --porcelain=v1 > "$RUN_DIR/status_before_verifier.txt"
 
-VERIFIER_PROMPT="$(cat "$ROOT/prompts/verifier_agent.md")
+if [[ "$GATE_DECISION" == "PASS" ]]; then
+  cat > "$RUN_DIR/verifier.final.txt" <<'EOF'
+Deterministic contract gate: candidate is build-green, contract-equivalent to the last known-good consumer contract, and has not modified protected upstream sources. LLM semantic review skipped.
+
+DRIFTGUARD_VERDICT: PASS
+EOF
+  printf '%s\n' "$VERDICT" > "$RUN_DIR/verifier.verdict"
+else
+  VERIFIER_MODE="semantic_agent"
+  VERIFIER_PROMPT="$(cat "$ROOT/prompts/verifier_agent.md")
 
 The machine-generated report is already inside this workspace at:
   .driftguard/verifier_evidence.json
 Do not request files outside this workspace. Do not edit repository files."
 
-if run_opencode_stage "verifier" "$VERIFIER_AGENT" "$VERIFIER_PROMPT" "$RUN_DIR" "$WORK"; then
-  VERIFIER_AGENT_RC=0
-else
-  VERIFIER_AGENT_RC=$?
+  if run_opencode_stage "verifier" "$VERIFIER_AGENT" "$VERIFIER_PROMPT" "$RUN_DIR" "$WORK"; then
+    VERIFIER_AGENT_RC=0
+  else
+    VERIFIER_AGENT_RC=$?
+  fi
+
+  git -C "$WORK" diff --binary "$BASE" > "$RUN_DIR/candidate_after_verifier.patch"
+  git -C "$WORK" status --porcelain=v1 > "$RUN_DIR/status_after_verifier.txt"
+  if ! cmp -s "$RUN_DIR/candidate_before_verifier.patch" "$RUN_DIR/candidate_after_verifier.patch" || ! cmp -s "$RUN_DIR/status_before_verifier.txt" "$RUN_DIR/status_after_verifier.txt"; then
+    echo "ERROR: verifier modified the candidate repair. This violates the verifier protocol." >&2
+    cp "$RUN_DIR/candidate_after_verifier.patch" "$RUN_DIR/verifier_protocol_violation.patch"
+    exit 3
+  fi
+
+  VERDICT="$("${UV_RUN[@]}" python "$TRACE_PY" verdict "$RUN_DIR/verifier.final.txt" 2>/dev/null || true)"
+  if [[ -z "$VERDICT" ]]; then
+    echo "Could not safely parse verifier verdict. See $RUN_DIR/verifier.final.txt" >&2
+    exit 4
+  fi
+
+  # Fail closed on unresolved contract drift. A semantic verifier may only PASS
+  # mismatching evidence when a harness/human approval artifact explicitly
+  # authorizes the contract change. No such artifact exists in this benchmark.
+  if [[ "$VERDICT" == "PASS" ]]; then
+    APPROVAL_PRESENT="$("${UV_RUN[@]}" python - "$RUN_DIR/verifier_evidence.json" <<'PYAPPROVAL'
+import json,sys
+x=json.load(open(sys.argv[1]))
+print(str(bool(x.get('policy',{}).get('human_contract_change_approval_present'))).lower())
+PYAPPROVAL
+)"
+    if [[ "$APPROVAL_PRESENT" != "true" ]]; then
+      VERDICT="FAIL"
+      POLICY_OVERRIDE=1
+      cat >> "$RUN_DIR/verifier.final.txt" <<'EOF'
+
+[DriftGuard policy gate]
+The semantic review attempted PASS while machine evidence still requires review and no consumer-owned contract-change approval artifact is present. DriftGuard fails closed and routes the candidate to compatibility repair.
+EOF
+    fi
+  fi
+  printf '%s\n' "$VERDICT" > "$RUN_DIR/verifier.verdict"
 fi
 
-git -C "$WORK" diff --binary "$BASE" > "$RUN_DIR/candidate_after_verifier.patch"
-git -C "$WORK" status --porcelain=v1 > "$RUN_DIR/status_after_verifier.txt"
-if ! cmp -s "$RUN_DIR/candidate_before_verifier.patch" "$RUN_DIR/candidate_after_verifier.patch" || ! cmp -s "$RUN_DIR/status_before_verifier.txt" "$RUN_DIR/status_after_verifier.txt"; then
-  echo "ERROR: verifier modified the candidate repair. This violates the verifier protocol." >&2
-  cp "$RUN_DIR/candidate_after_verifier.patch" "$RUN_DIR/verifier_protocol_violation.patch"
-  exit 3
-fi
-
-VERDICT="$("${UV_RUN[@]}" python "$TRACE_PY" verdict "$RUN_DIR/verifier.final.txt" 2>/dev/null || true)"
-if [[ -z "$VERDICT" ]]; then
-  echo "Could not safely parse verifier verdict." >&2
-  echo "Accepted forms include '# FAIL', '**PASS**', 'Verdict: ABSTAIN', JSON verdicts," >&2
-  echo "or the preferred 'DRIFTGUARD_VERDICT: PASS|FAIL|ABSTAIN' marker." >&2
-  echo "Conflicting verdict markers intentionally fail closed." >&2
-  echo "See $RUN_DIR/verifier.final.txt" >&2
-  exit 4
-fi
-printf '%s\n' "$VERDICT" | tee "$RUN_DIR/verifier.verdict"
-
-# 5) Retry only when the verifier found a concrete failure. ABSTAIN is kept as
-# a human-review outcome by default; set DRIFTGUARD_RETRY_ON_ABSTAIN=1 to retry.
+# 4) Retry only when verification identifies unresolved incompatibility. The
+# repair agent is explicitly constrained to downstream compatibility logic.
 RETRY_RAN=0
+RETRY_AGENT_RC=0
+POLICY_RETRY_RAN=0
+POLICY_RETRY_AGENT_RC=0
+SOURCE_GUARD_VIOLATION=0
+SOURCE_GUARD_FINAL_VIOLATION=0
+
 if [[ "$VERDICT" == "FAIL" || ( "$VERDICT" == "ABSTAIN" && "$RETRY_ON_ABSTAIN" == "1" ) ]]; then
   RETRY_RAN=1
   cp "$RUN_DIR/verifier.final.txt" "$WORK/.driftguard/verifier_feedback.md"
@@ -402,14 +446,42 @@ if [[ "$VERDICT" == "FAIL" || ( "$VERDICT" == "ABSTAIN" && "$RETRY_ON_ABSTAIN" =
 
 The verifier's exact feedback is available inside this workspace at:
   .driftguard/verifier_feedback.md
-Read it, independently validate it against the repository, then make the smallest safe correction."
+Read it, independently validate it against the repository, then make the smallest safe downstream correction."
   if run_opencode_stage "retry" "$REPAIR_AGENT" "$RETRY_PROMPT" "$RUN_DIR" "$WORK"; then
     RETRY_AGENT_RC=0
   else
     RETRY_AGENT_RC=$?
   fi
+
+  # 5) Deterministic immutable-source guard. If the retry rewrites upstream
+  # source snapshots, roll only those edits back to the incident baseline and
+  # allow exactly one bounded policy-correction retry.
+  "${UV_RUN[@]}" python "$SOURCE_GUARD_PY" "$WORK" "$BASE" --restore --output "$RUN_DIR/source_guard.after_retry.json" >/dev/null || true
+  SOURCE_GUARD_VIOLATION="$("${UV_RUN[@]}" python -c 'import json,sys; print(1 if json.load(open(sys.argv[1]))["violation"] else 0)' "$RUN_DIR/source_guard.after_retry.json")"
+  if [[ "$SOURCE_GUARD_VIOLATION" == "1" ]]; then
+    POLICY_RETRY_RAN=1
+    VIOLATION_PATHS="$("${UV_RUN[@]}" python -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["violations"]))' "$RUN_DIR/source_guard.after_retry.json")"
+    cat > "$WORK/.driftguard/policy_violation.md" <<EOF
+The previous retry modified protected upstream source snapshots. DriftGuard restored those files to the incident baseline, preserving the external upstream change.
+
+Protected paths that were modified:
+$VIOLATION_PATHS
+
+Do not edit those paths again. Implement compatibility normalization in downstream staging/model logic.
+EOF
+    POLICY_RETRY_PROMPT="$(cat "$ROOT/prompts/policy_retry.md")"
+    if run_opencode_stage "policy_retry" "$REPAIR_AGENT" "$POLICY_RETRY_PROMPT" "$RUN_DIR" "$WORK"; then
+      POLICY_RETRY_AGENT_RC=0
+    else
+      POLICY_RETRY_AGENT_RC=$?
+    fi
+
+    # A second violation fails closed. Restore protected inputs again so the
+    # final evaluator never rewards a source rewrite.
+    "${UV_RUN[@]}" python "$SOURCE_GUARD_PY" "$WORK" "$BASE" --restore --output "$RUN_DIR/source_guard.after_policy_retry.json" >/dev/null || true
+    SOURCE_GUARD_FINAL_VIOLATION="$("${UV_RUN[@]}" python -c 'import json,sys; print(1 if json.load(open(sys.argv[1]))["violation"] else 0)' "$RUN_DIR/source_guard.after_policy_retry.json")"
+  fi
 else
-  RETRY_AGENT_RC=0
   echo "No retry launched for verifier verdict: $VERDICT"
 fi
 
@@ -424,31 +496,38 @@ fi
 git -C "$WORK" diff --binary "$BASE" > "$RUN_DIR/final.patch"
 "${UV_RUN[@]}" python - "$RUN_DIR/flow_summary.json" \
   "$RUN_DIR/manifest.start.json" "$RUN_DIR/baseline.evaluation.json" \
-  "$RUN_DIR/final.evaluation.json" "$RUN_DIR/verifier.summary.json" <<PY
+  "$RUN_DIR/final.evaluation.json" <<PY
 import json, pathlib, sys
-out, manifest_p, baseline_p, final_p, verifier_p = map(pathlib.Path, sys.argv[1:])
+out, manifest_p, baseline_p, final_p = map(pathlib.Path, sys.argv[1:])
 manifest=json.loads(manifest_p.read_text())
 baseline=json.loads(baseline_p.read_text())
 final=json.loads(final_p.read_text())
-verifier=json.loads(verifier_p.read_text())
 payload={
   **manifest,
+  "workflow_version": "driftguard_v2",
   "baseline_agent_exit_code": int(r"$BASELINE_AGENT_RC"),
   "baseline_evaluator_exit_code": int(r"$BASELINE_EVAL_RC"),
   "baseline_verified_recovery": baseline.get("verified_recovery"),
   "baseline_value_pass": baseline.get("value_pass"),
   "baseline_schema_pass": baseline.get("schema_pass"),
+  "contract_gate_decision": r"$GATE_DECISION",
+  "verifier_mode": r"$VERIFIER_MODE",
   "verifier_agent_exit_code": int(r"$VERIFIER_AGENT_RC"),
   "verifier_verdict": r"$VERDICT",
+  "verifier_policy_override": bool(int(r"$POLICY_OVERRIDE")),
   "retry_ran": bool(int(r"$RETRY_RAN")),
   "retry_agent_exit_code": int(r"$RETRY_AGENT_RC"),
+  "source_guard_violation": bool(int(r"$SOURCE_GUARD_VIOLATION")),
+  "policy_retry_ran": bool(int(r"$POLICY_RETRY_RAN")),
+  "policy_retry_agent_exit_code": int(r"$POLICY_RETRY_AGENT_RC"),
+  "source_guard_final_violation": bool(int(r"$SOURCE_GUARD_FINAL_VIOLATION")),
   "final_evaluator_exit_code": int(r"$FINAL_EVAL_RC"),
   "final_verified_recovery": final.get("verified_recovery"),
   "final_value_pass": final.get("value_pass"),
   "final_schema_pass": final.get("schema_pass"),
   "web_sessions": {
     stage: (out.parent / f"{stage}.web_url.txt").read_text().strip()
-    for stage in ("baseline", "verifier", "retry")
+    for stage in ("baseline", "verifier", "retry", "policy_retry")
     if (out.parent / f"{stage}.web_url.txt").exists()
   },
 }
@@ -459,19 +538,23 @@ PY
 cat <<MSG
 
 === DriftGuard OpenCode flow complete ===
-Case:               $CASE
-Run id:             $RUN_ID
-Model:              $MODEL
-Variant:            $VARIANT
-Usage multiplier:   ${USAGE_MULTIPLIER}x (recorded metadata)
-Baseline recovered: $("${UV_RUN[@]}" python -c 'import json,sys; print(json.load(open(sys.argv[1]))["verified_recovery"])' "$RUN_DIR/baseline.evaluation.json")
-Verifier verdict:   $VERDICT
-Retry ran:          $RETRY_RAN
-Final recovered:    $("${UV_RUN[@]}" python -c 'import json,sys; print(json.load(open(sys.argv[1]))["verified_recovery"])' "$RUN_DIR/final.evaluation.json")
-Evidence bundle:    $RUN_DIR
-Summary:            $RUN_DIR/flow_summary.json
-OpenCode Web:        ${WEB_URL:-disabled}
-Web session links:   $RUN_DIR/*.web_url.txt
+Case:                 $CASE
+Run id:               $RUN_ID
+Model:                $MODEL
+Variant:              $VARIANT
+Usage multiplier:     ${USAGE_MULTIPLIER}x (recorded metadata)
+Baseline recovered:   $("${UV_RUN[@]}" python -c 'import json,sys; print(json.load(open(sys.argv[1]))["verified_recovery"])' "$RUN_DIR/baseline.evaluation.json")
+Contract gate:        $GATE_DECISION
+Verifier mode:        $VERIFIER_MODE
+Verifier verdict:     $VERDICT
+Policy override:      $POLICY_OVERRIDE
+Retry ran:            $RETRY_RAN
+Source guard hit:     $SOURCE_GUARD_VIOLATION
+Policy retry ran:     $POLICY_RETRY_RAN
+Final recovered:      $("${UV_RUN[@]}" python -c 'import json,sys; print(json.load(open(sys.argv[1]))["verified_recovery"])' "$RUN_DIR/final.evaluation.json")
+Evidence bundle:      $RUN_DIR
+Summary:              $RUN_DIR/flow_summary.json
+OpenCode Web:          ${WEB_URL:-disabled}
 MSG
 
 # The flow itself completed even when the final benchmark result is a failure;

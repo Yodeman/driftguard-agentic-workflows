@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Generate limited, actionable before/after evidence for the verifier agent.
+"""Generate limited, actionable evidence for DriftGuard verification.
 
-Unlike the hidden evaluator, this report is intended to be shown to the final
-workflow. It reveals whether values and schemas changed from a known-good
-contract, but it does not reveal raw golden rows or case metadata.
+The report is intended to be shown to the workflow. It reveals whether current
+logical outputs match the last known-good consumer contract and whether the
+candidate touched protected upstream sources, but never exposes hidden case
+metadata or raw golden rows.
 """
 
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import subprocess
 import sys
@@ -17,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = ROOT / "evidence" / "golden_snapshot.json"
+PROTECTED_UPSTREAM_GLOBS = ("seeds/*.csv",)
 
 
 def schema_diff(expected: list[dict], actual: list[dict]) -> list[dict]:
@@ -30,10 +33,24 @@ def schema_diff(expected: list[dict], actual: list[dict]) -> list[dict]:
     ]
 
 
+def git_changed_paths(repo: Path, base: str | None) -> list[str]:
+    if not base:
+        return []
+    p = subprocess.run(["git", "diff", "--name-only", base], cwd=repo, text=True, capture_output=True)
+    if p.returncode != 0:
+        return []
+    paths = [x.strip() for x in p.stdout.splitlines() if x.strip()]
+    u = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"], cwd=repo, text=True, capture_output=True)
+    if u.returncode == 0:
+        paths.extend(x.strip() for x in u.stdout.splitlines() if x.strip())
+    return sorted(set(p for p in paths if not p.startswith(".driftguard/")))
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("repo", type=Path)
     p.add_argument("output", type=Path)
+    p.add_argument("--base", help="Incident baseline commit; contains the upstream source change")
     args = p.parse_args()
     repo = args.repo.resolve()
 
@@ -43,11 +60,27 @@ def main() -> None:
     if golden.get("snapshot_version") != 2:
         raise SystemExit("Golden snapshot uses legacy format. Re-run ./scripts/capture_golden.sh")
 
+    changed = git_changed_paths(repo, args.base)
+    protected_modified = sorted(
+        path for path in changed
+        if any(fnmatch.fnmatch(path, pattern) for pattern in PROTECTED_UPSTREAM_GLOBS)
+    )
+
     build = subprocess.run(["dbt", "build", "--profiles-dir", "."], cwd=repo, text=True, capture_output=True)
     report: dict = {
+        "evidence_version": 2,
         "build_pass": build.returncode == 0,
-        "purpose": "Independent verifier evidence against the last known-good logical contract",
+        "purpose": "Independent evidence against the last known-good consumer logical contract",
         "models": {},
+        "candidate_changed_paths": changed,
+        "policy": {
+            "contract_authority": "last_known_good_consumer_contract",
+            "default_action_on_mismatch": "preserve_contract_unless_explicit_consumer_owned_migration_evidence_authorizes_change",
+            "upstream_snapshot_is_observation_not_authorization": True,
+            "protected_upstream_globs": list(PROTECTED_UPSTREAM_GLOBS),
+            "protected_upstream_modified": protected_modified,
+            "human_contract_change_approval_present": False,
+        },
     }
     if build.returncode != 0:
         report["build_output_tail"] = (build.stdout + build.stderr)[-3500:]

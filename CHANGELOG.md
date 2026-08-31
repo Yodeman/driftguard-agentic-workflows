@@ -81,3 +81,42 @@ The completed subset produced baseline VRR **5/11 (45.5%)** and DriftGuard VRR *
 Three verifier-triggered retries restored the hidden value/schema contract but did so by modifying protected upstream seed files, so the evaluator correctly rejected them as unsafe repairs. Two silent-semantic baseline failures were incorrectly passed by the verifier because it treated an unaccompanied upstream source mutation as sufficient evidence of an authorized semantic contract change.
 
 **Learning:** Independent contract verification generalizes to representation/interface drift, but the current verifier lacks a clear hierarchy of contract authority for semantic changes, and retry agents need deterministic enforcement that upstream source snapshots are immutable. These observations will drive the next agent-quality iteration after the missing benchmark case is completed.
+
+### Frozen Iteration-1 result — complete 12-case suite
+
+The completed blinded suite produced:
+
+- baseline VRR: **6/12 (50.0%)**;
+- DriftGuard v1 VRR: **7/12 (58.3%)**;
+- absolute gain: **+8.3 percentage points**;
+- baseline failures rescued: **1**;
+- baseline successes regressed: **0**;
+- verifier FAIL precision: **100%**;
+- verifier FAIL recall on baseline failures: **66.7%**;
+- median baseline tokens: **22,993**;
+- median v1 workflow tokens: **62,846**;
+- total reported baseline cost: **0.07912364**;
+- total reported v1 workflow cost: **0.1779315**.
+
+Family behavior was sharply different: structural drift was already **3/3** for the baseline, representation drift improved from **2/3 to 3/3**, while silent-semantic drift remained **1/6 to 1/6**.
+
+Trajectory review found two distinct failure modes behind the silent-semantic plateau:
+
+1. **Authority confusion:** two baseline failures (`order_date_year_shift` and `payment_method_label_swap`) were incorrectly passed by the verifier because it treated an upstream source-only sync as sufficient authorization to change consumer semantics.
+2. **Unsafe repair boundary:** three verifier-triggered retries correctly identified the semantic corruption and restored hidden values, but did so by rewriting protected upstream seed snapshots. The evaluator rejected those repairs even though values/schema matched, because the workflow is required to adapt downstream rather than edit the external source.
+
+**Decision:** keep independent verification, but revise the architecture instead of adding more generic reasoning. The next intervention should make contract authority and repair boundaries explicit, and should avoid paying for an LLM verifier when deterministic evidence already proves equivalence.
+
+### Iteration 2 — adaptive contract gate + semantic authority + immutable-source guard
+
+**Hypothesis:** Most v1 overhead came from verifying already-correct candidates, while most v1 failures came from ambiguous authority and unsafe source rewrites. A hybrid deterministic/agentic verifier should improve both reliability and cost.
+
+**Changes being tested:**
+
+1. **Deterministic contract gate.** After baseline repair, machine evidence checks build status, value equivalence, schema equivalence, row counts, and protected-source edits. Contract-equivalent candidates skip the LLM semantic verifier entirely.
+2. **Explicit authority hierarchy.** When evidence disagrees with the last-known-good contract, the semantic verifier is told that an upstream source snapshot is observation, not authorization. A contract change requires explicit consumer-owned migration/approval evidence; otherwise compatibility must be preserved.
+3. **Fail-closed PASS policy.** A semantic verifier cannot PASS unresolved contract drift without an explicit human/consumer contract-change approval artifact. Unsafe PASS is converted to FAIL and recorded as a policy override.
+4. **Immutable-source repair boundary.** Retry prompts make `seeds/*.csv` non-negotiably immutable and require compatibility normalization in staging/model logic.
+5. **Deterministic source guard + one bounded policy retry.** If a retry still edits a protected upstream source, DriftGuard restores only that edit to the incident baseline and gives a fresh repair agent one explicit policy-correction attempt. A second source violation fails closed.
+
+**Evaluation plan:** rerun the same frozen 12 cases with the same baseline model/provider/variant. Preserve the Iteration-1 summary as a milestone before rerunning. Compare VRR, verifier recall, regressions, semantic-verifier call rate, source-guard violations, policy retries, tokens, and reported cost. Do not change benchmark cases during this iteration.
