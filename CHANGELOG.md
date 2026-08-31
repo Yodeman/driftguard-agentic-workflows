@@ -65,3 +65,19 @@ performance gain in the improvement evaluation.
 **Observed failure:** Preflight showed that `customer_id_decimal_representation` and `payment_order_id_decimal_representation` remained `contract_pass=true`. dbt/DuckDB canonicalized decimal-form identifier text such as `1.0` back to the same effective integer representation, so those mutations did not create real incidents on the frozen toolchain.
 
 **Decision:** Removed both ineffective cases before any model-budget runs. Replaced them with `payment_id_prefixed_representation` (a green-build representation drift) and `order_date_year_shift` (a green-build silent semantic drift). The suite remains 12 cases, now 3 structural / 3 representation / 6 silent-semantic.
+
+### Infrastructure revision v4.2 — partial-suite reporting + single-project Web review
+
+**Observed failures:** The first 12-case suite left one case (`customer_key_rename`) without a completed flow. Because v4.1 exited on infrastructure failure before invoking the aggregate reporter, no `evidence/summary/` directory was produced even though 11 cases had complete evidence. OpenCode Web also opened a fresh browser tab for every deep-linked baseline/verifier/retry session.
+
+**What changed:** Suite aggregation now runs even when one or more flows fail and explicitly reports `complete`, `expected_cases`, and `missing_cases`. Per-case orchestration logs and `infrastructure_error.txt` are preserved. Suite runs use a stable, case-neutral workspace path so OpenCode sees one project across cases; the project view opens once, while direct session URLs remain archived but are no longer auto-opened by default.
+
+**Decision:** Treat the current 11/12 result as partial diagnostic evidence only. Complete the missing case before freezing the Iteration-1 aggregate.
+
+### Partial 12-case run diagnostic (11 completed; not a final claim)
+
+The completed subset produced baseline VRR **5/11 (45.5%)** and DriftGuard VRR **6/11 (54.5%)**, a **+9.0 percentage-point** change with one baseline failure safely rescued and no baseline success regressed. Verifier FAIL precision was **100%** but recall on baseline failures was **66.7%**. Representation drift improved from **2/3** to **3/3**, while silent-semantic recovery remained **1/6**.
+
+Three verifier-triggered retries restored the hidden value/schema contract but did so by modifying protected upstream seed files, so the evaluator correctly rejected them as unsafe repairs. Two silent-semantic baseline failures were incorrectly passed by the verifier because it treated an unaccompanied upstream source mutation as sufficient evidence of an authorized semantic contract change.
+
+**Learning:** Independent contract verification generalizes to representation/interface drift, but the current verifier lacks a clear hierarchy of contract authority for semantic changes, and retry agents need deterministic enforcement that upstream source snapshots are immutable. These observations will drive the next agent-quality iteration after the missing benchmark case is completed.

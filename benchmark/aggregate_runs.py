@@ -55,6 +55,8 @@ def percent(n: int, d: int) -> float | None:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--output-dir", type=Path, default=ROOT / "evidence" / "summary")
+    p.add_argument("--expected-cases", nargs="*", default=None,
+                   help="Expected scored case ids. Missing completed flows are reported explicitly.")
     args = p.parse_args()
 
     rows: list[dict[str, Any]] = []
@@ -95,6 +97,17 @@ def main() -> None:
             }
         )
 
+    expected_cases = list(args.expected_cases or [])
+    if not expected_cases:
+        index = CASES_DIR / "index.txt"
+        if index.exists():
+            expected_cases = [
+                line.strip() for line in index.read_text().splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
+    completed_cases = {str(r["case"]) for r in rows}
+    missing_cases = [c for c in expected_cases if c not in completed_cases]
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = args.output_dir / "latest_runs.csv"
     json_path = args.output_dir / "latest_runs.json"
@@ -116,12 +129,22 @@ def main() -> None:
     regressions = sum(r["baseline_verified_recovery"] and (not r["final_verified_recovery"]) for r in rows)
     retries = sum(r["retry_ran"] for r in rows)
     verdicts = Counter(str(r["verifier_verdict"]) for r in rows)
+    # Treat a baseline verified recovery as a verifier PASS target, and a
+    # baseline failure as a FAIL target. ABSTAIN remains neither. This is a
+    # useful diagnostic, not the primary user metric.
+    verifier_tp = sum((not r["baseline_verified_recovery"]) and r["verifier_verdict"] == "FAIL" for r in rows)
+    verifier_fn = sum((not r["baseline_verified_recovery"]) and r["verifier_verdict"] == "PASS" for r in rows)
+    verifier_tn = sum(r["baseline_verified_recovery"] and r["verifier_verdict"] == "PASS" for r in rows)
+    verifier_fp = sum(r["baseline_verified_recovery"] and r["verifier_verdict"] == "FAIL" for r in rows)
     families: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         families[row["family"]].append(row)
 
     aggregate = {
         "cases": n,
+        "expected_cases": len(expected_cases) if expected_cases else n,
+        "complete": not missing_cases and (not expected_cases or n == len(expected_cases)),
+        "missing_cases": missing_cases,
         "baseline_verified": baseline_ok,
         "final_verified": final_ok,
         "baseline_vrr_percent": percent(baseline_ok, n),
@@ -131,12 +154,22 @@ def main() -> None:
         "regressions": regressions,
         "retry_runs": retries,
         "verifier_verdicts": dict(verdicts),
+        "verifier_fail_precision_percent": percent(verifier_tp, verifier_tp + verifier_fp),
+        "verifier_fail_recall_percent": percent(verifier_tp, verifier_tp + verifier_fn),
+        "verifier_pass_specificity_percent": percent(verifier_tn, verifier_tn + verifier_fp),
         "median_baseline_tokens": int(median([r["baseline_tokens"] for r in rows])) if rows else None,
         "median_workflow_tokens": int(median([r["workflow_tokens"] for r in rows])) if rows else None,
         "total_baseline_reported_cost": round(sum(r["baseline_reported_cost"] for r in rows), 8),
         "total_workflow_reported_cost": round(sum(r["workflow_reported_cost"] for r in rows), 8),
     }
     (args.output_dir / "aggregate.json").write_text(json.dumps(aggregate, indent=2, sort_keys=True) + "\n")
+    suite_status = {
+        "complete": aggregate["complete"],
+        "expected_cases": expected_cases,
+        "completed_cases": sorted(completed_cases),
+        "missing_cases": missing_cases,
+    }
+    (args.output_dir / "suite_status.json").write_text(json.dumps(suite_status, indent=2, sort_keys=True) + "\n")
 
     lines = [
         "# DriftGuard benchmark report",
@@ -145,13 +178,17 @@ def main() -> None:
         "",
         "## Overall",
         "",
-        f"- Cases with completed evidence: **{n}**",
+        f"- Suite completeness: **{'COMPLETE' if aggregate['complete'] else 'PARTIAL'}**",
+        f"- Cases with completed evidence: **{n}/{aggregate['expected_cases']}**",
+        f"- Missing cases: **{', '.join(missing_cases) if missing_cases else 'none'}**",
         f"- Baseline Verified Recovery Rate: **{baseline_ok}/{n} ({percent(baseline_ok, n)}%)**" if n else "- Baseline Verified Recovery Rate: n/a",
         f"- DriftGuard Verified Recovery Rate: **{final_ok}/{n} ({percent(final_ok, n)}%)**" if n else "- DriftGuard Verified Recovery Rate: n/a",
         f"- Absolute change: **{aggregate['absolute_vrr_change_pp']} percentage points**" if n else "- Absolute change: n/a",
         f"- Baseline failures rescued by verification/retry: **{rescued}**",
         f"- Baseline successes regressed by workflow: **{regressions}**",
         f"- Verifier verdicts: **{dict(verdicts)}**",
+        f"- Verifier FAIL precision: **{aggregate['verifier_fail_precision_percent']}%**" if n else "- Verifier FAIL precision: n/a",
+        f"- Verifier FAIL recall on baseline failures: **{aggregate['verifier_fail_recall_percent']}%**" if n else "- Verifier FAIL recall: n/a",
         f"- Retry stages run: **{retries}/{n}**" if n else "- Retry stages run: n/a",
         "",
         "## By failure family",

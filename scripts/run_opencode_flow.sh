@@ -26,7 +26,9 @@ WEB_ENABLED="${DRIFTGUARD_OPENCODE_WEB:-1}"
 WEB_AUTOSTART="${DRIFTGUARD_OPENCODE_WEB_AUTOSTART:-1}"
 WEB_HELPER="$ROOT/scripts/opencode_web.sh"
 WEB_URL="${DRIFTGUARD_OPENCODE_WEB_URL:-}"
-WEB_OPEN_SESSION="${DRIFTGUARD_OPENCODE_WEB_OPEN_SESSION:-1}"
+WEB_OPEN_SESSION="${DRIFTGUARD_OPENCODE_WEB_OPEN_SESSION:-0}"
+WEB_OPEN_PROJECT="${DRIFTGUARD_OPENCODE_WEB_OPEN_PROJECT:-1}"
+WEB_PROJECT_MARKER="$ROOT/evidence/opencode_web/project_tab.url"
 
 command -v "$OPENCODE_BIN" >/dev/null 2>&1 || {
   echo "OpenCode CLI not found: $OPENCODE_BIN" >&2
@@ -45,7 +47,6 @@ strip_ansi() {
 
 open_url_best_effort() {
   local url="$1"
-  [[ "$WEB_OPEN_SESSION" == "1" ]] || return 0
   if command -v xdg-open >/dev/null 2>&1; then
     xdg-open "$url" >/dev/null 2>&1 || true
   elif command -v wslview >/dev/null 2>&1; then
@@ -101,6 +102,23 @@ BASE="${STATE[2]}"
 RUN_DIR="$ROOT/evidence/runs/$CASE/$RUN_ID"
 mkdir -p "$RUN_DIR"
 mv "$PREP_LOG" "$RUN_DIR/prepare.log"
+
+# Preserve orchestration failures as evidence. This is especially important in
+# suite mode, where we continue to other cases and still generate a partial
+# aggregate report.
+flow_exit_trap() {
+  local rc=$?
+  if [[ $rc -ne 0 ]]; then
+    {
+      echo "exit_code=$rc"
+      echo "case=$CASE"
+      echo "run_id=$RUN_ID"
+      echo "workspace=$WORK"
+      echo "bash_line=${BASH_LINENO[0]:-unknown}"
+    } > "$RUN_DIR/infrastructure_error.txt"
+  fi
+}
+trap flow_exit_trap EXIT
 
 # Route automated sessions through OpenCode's web server so baseline, verifier,
 # and retry operations are visible live in the browser. OpenCode documents
@@ -168,6 +186,9 @@ run_opencode_stage() {
   echo
   echo "=== OpenCode stage: $stage ==="
   echo "agent=$agent model=$MODEL variant=$VARIANT"
+  if [[ "$WEB_ENABLED" == "1" ]]; then
+    echo "Watch live: $WEB_URL (title: $title)"
+  fi
 
   : > "$events"
   local web_watch_pid=""
@@ -176,6 +197,19 @@ run_opencode_stage() {
     project_url="$("${UV_RUN[@]}" python "$TRACE_PY" web-url "$WEB_URL" "$work")"
     printf '%s\n' "$project_url" > "$run_dir/${stage}.project_web_url.txt"
     echo "OpenCode project view: $project_url"
+
+    # In suite mode every case uses the same case-neutral workspace path. Open
+    # that project view exactly once and let OpenCode's live UI/session list
+    # update in the same tab. Direct session links are still archived, but are
+    # not auto-opened unless DRIFTGUARD_OPENCODE_WEB_OPEN_SESSION=1.
+    if [[ "$WEB_OPEN_PROJECT" == "1" ]]; then
+      mkdir -p "$(dirname "$WEB_PROJECT_MARKER")"
+      previous_project_url="$(cat "$WEB_PROJECT_MARKER" 2>/dev/null || true)"
+      if [[ "$previous_project_url" != "$project_url" ]]; then
+        printf '%s\n' "$project_url" > "$WEB_PROJECT_MARKER"
+        open_url_best_effort "$project_url"
+      fi
+    fi
 
     # OpenCode Web currently has versions where CLI-created sessions exist on
     # the backend but Home does not register/render their project. Watch the raw
@@ -188,7 +222,9 @@ run_opencode_stage() {
           local_url="$("${UV_RUN[@]}" python "$TRACE_PY" web-url "$WEB_URL" "$work" --session-id "$local_sid")"
           printf '%s\n' "$local_url" > "$run_dir/${stage}.web_url.txt"
           echo "OpenCode live session ($stage): $local_url" >&2
-          open_url_best_effort "$local_url"
+          if [[ "$WEB_OPEN_SESSION" == "1" ]]; then
+            open_url_best_effort "$local_url"
+          fi
           exit 0
         fi
         sleep 0.1
@@ -202,16 +238,19 @@ run_opencode_stage() {
     cd "$work"
     # Expose the benchmark's pinned Python/dbt toolchain on PATH for every
     # agent stage. This avoids agent-specific environment bootstrapping while
-    # keeping the workspace itself blinded.
+    # keeping the workspace itself blinded. BROWSER=none stops each attached
+    # `run` from popping its own browser tab; the one tab opened by
+    # opencode_web.sh already shows every session live.
     PATH="$VENV/bin:$PATH" \
     VIRTUAL_ENV="$VENV" \
     NO_COLOR=1 \
+    BROWSER=none \
       "$OPENCODE_BIN" "${OPENCODE_COMMON[@]}" \
         --agent "$agent" \
         --dir "$work" \
         --title "$title" \
         "$prompt"
-  ) > >(tee "$events") 2> >(tee "$stderr_file" >&2); then
+  ) > "$events" 2> "$stderr_file"; then
     rc=0
   else
     rc=$?
@@ -238,7 +277,9 @@ run_opencode_stage() {
     if [[ ! -f "$run_dir/${stage}.web_url.txt" ]]; then
       printf '%s\n' "$session_web_url" > "$run_dir/${stage}.web_url.txt"
       echo "OpenCode session ($stage): $session_web_url"
-      open_url_best_effort "$session_web_url"
+      if [[ "$WEB_OPEN_SESSION" == "1" ]]; then
+        open_url_best_effort "$session_web_url"
+      fi
     fi
   fi
   if [[ -n "$sid" ]]; then

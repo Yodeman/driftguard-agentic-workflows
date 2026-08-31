@@ -145,16 +145,20 @@ directory. Each agent stage still uses `opencode run --attach ... --dir <workspa
 
 OpenCode Web has had frontend versions where CLI-created sessions exist on the
 backend but the Home/sidebar does not automatically register the associated
-project. DriftGuard therefore does not rely on Home. As soon as the raw OpenCode
-event stream exposes the new session id, the runner creates a direct project/session
-web URL, prints it, saves it as `<stage>.web_url.txt`, and best-effort opens it in
-the browser. This makes baseline, verifier, and retry trajectories directly
-viewable even when the Home page is empty.
+project. DriftGuard therefore archives a direct project/session URL for every
+stage as `<stage>.web_url.txt`.
 
-To print links without opening browser tabs:
+For suites, all cases now reuse one **stable, case-neutral workspace path**. That
+keeps every session in one OpenCode project while `prepare_case.sh` fully replaces
+the repository between cases. The project view is opened once; direct session
+links are archived but are **not auto-opened by default**, avoiding one browser
+tab per baseline/verifier/retry stage. OpenCode's live project UI can then be
+left open for the whole suite.
+
+To restore the old behavior of auto-opening every direct session link:
 
 ```bash
-export DRIFTGUARD_OPENCODE_WEB_OPEN_SESSION=0
+export DRIFTGUARD_OPENCODE_WEB_OPEN_SESSION=1
 ```
 
 Manage the server explicitly when useful:
@@ -165,9 +169,9 @@ Manage the server explicitly when useful:
 ./scripts/opencode_web.sh stop
 ```
 
-A suite shares one web backend across all cases. If DriftGuard owns the server,
-the first case starts it from that case's blinded workspace; later cases reuse
-the backend and expose their own direct session links:
+A suite shares one web backend and one stable case-neutral project directory
+across all cases. Individual run ids and incident identities remain outside the
+agent workspace:
 
 ```bash
 ./scripts/run_opencode_suite.sh
@@ -227,7 +231,7 @@ If all controls pass, run the complete OpenCode benchmark:
 ./scripts/run_opencode_suite.sh
 ```
 
-The suite uses the configured OpenCode Web backend and the frozen `opencode-go/glm-5.3-flash` / `max` setup, preserves each stage trajectory, and generates an aggregate report automatically. Rebuild the report at any time with:
+The suite uses the configured OpenCode Web backend and the frozen `opencode-go/glm-5.3-flash` / `max` setup, preserves each stage trajectory, and generates an aggregate report automatically. Aggregate generation now runs even if one case fails at the orchestration layer; `evidence/summary/suite_status.json` and the report explicitly mark missing cases so partial results cannot be mistaken for a complete benchmark. Rebuild the report at any time with:
 
 ```bash
 ./scripts/summarize_suite.sh

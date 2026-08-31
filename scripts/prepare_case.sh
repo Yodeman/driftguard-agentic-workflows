@@ -20,16 +20,26 @@ command -v uv >/dev/null 2>&1 || { echo "uv is required but was not found on PAT
 [[ -f "$CASEFILE" ]] || { echo "Unknown case: $CASE" >&2; exit 2; }
 [[ -d "$VENDOR/.git" ]] || { echo "Run ./scripts/bootstrap.sh first" >&2; exit 2; }
 
-# Do not leak the incident name through the workspace path. The random run id is
-# recorded outside the agent workspace and resolved later by evaluate_case.sh.
+# Run IDs remain random and are recorded only outside the workspace. For normal
+# one-off runs the repository path is also random. The suite may set
+# DRIFTGUARD_WORKSPACE_DIR to one stable, case-neutral path so all OpenCode Web
+# sessions share one project and can be reviewed in a single browser tab.
 RUN_ID="run_$("${UV_RUN[@]}" python - <<'PY'
 import secrets
 print(secrets.token_hex(6))
 PY
 )"
-WORK="$ROOT/workspaces/$RUN_ID"
-rm -rf "$WORK"
+if [[ -n "${DRIFTGUARD_WORKSPACE_DIR:-}" ]]; then
+  WORK="$DRIFTGUARD_WORKSPACE_DIR"
+else
+  WORK="$ROOT/workspaces/$RUN_ID"
+fi
+
 mkdir -p "$ROOT/workspaces" "$STATE_DIR"
+WORK_PARENT="$(dirname "$WORK")"
+mkdir -p "$WORK_PARENT"
+WORK="$(cd "$WORK_PARENT" && pwd -P)/$(basename "$WORK")"
+rm -rf "$WORK"
 
 git clone -q --no-hardlinks "$VENDOR" "$WORK" >/dev/null 2>&1
 
